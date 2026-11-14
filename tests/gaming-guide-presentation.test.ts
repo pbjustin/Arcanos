@@ -43,6 +43,20 @@ describe('Gaming guide delivery formatting', () => {
     expect(present(answer)).toBe('To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel. [1]\n\nThe upper gate opens. [2]');
   });
 
+  it.each(['Journal, use the right-hand tab', 'Journal (Navigation, Stations), use the right-hand tab'])(
+    'keeps parenthetical UI text intact when numbering actions (%s)', uiText => {
+      const answer = `To start the floodgate, open the map (${uiText}), select a site, and then pay the fee. [1]`;
+      expect(present(answer)).toBe(`To start the floodgate:\n\n1. Open the map (${uiText}).\n2. Select a site.\n3. Pay the fee. [1]`);
+    }
+  );
+
+  it('keeps all adjacent citations in order on the step group', () => {
+    const answer = 'To start the floodgate, open the valve, and then enter the tunnel. [1, 2] [3] The upper gate opens. [2]';
+    expect(present(answer, { singleSource: false })).toBe(
+      'To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel. [1, 2] [3]\n\nThe upper gate opens. [2]'
+    );
+  });
+
   it.each([
     ['comma inside a UI name', 'To start the floodgate, open the **Trial, Turn the Tide** journal entry, and then select any slot. [1]'],
     ['comma inside a double-quoted UI name', 'To start the floodgate, open the "Trial, Turn the Tide" journal entry, and then select any slot. [1]'],
@@ -58,7 +72,13 @@ describe('Gaming guide delivery formatting', () => {
     ['two actions without an ordering cue', 'To start the floodgate, open the valve, and enter the tunnel. [1]'],
     ['a nonterminal coordinating conjunction', 'To start the floodgate, open the valve, and enter the tunnel, turn the handle. [1]'],
     ['a descriptive clause in an action list', 'To start the floodgate, open the valve, the light turns blue, and enter the tunnel. [1]'],
-    ['a quoted action-like comma in an action list', 'To start the floodgate, open the “Trial, Turn the Tide” journal entry, select a slot, and enter the tunnel. [1]']
+    ['a quoted action-like comma in an action list', 'To start the floodgate, open the “Trial, Turn the Tide” journal entry, select a slot, and enter the tunnel. [1]'],
+    ['an unclosed parenthesis', 'To start the floodgate, open the map (Journal, use the right-hand tab, select a site, and then pay the fee. [1]'],
+    ['an extra closing parenthesis', 'To start the floodgate, open the map (Journal, use the right-hand tab)), select a site, and then pay the fee. [1]'],
+    ['an ordering cue inside parentheses', 'To start the floodgate, open the map (Journal, then use the right-hand tab), pay the fee. [1]'],
+    ['an optional action inside parentheses', 'To start the floodgate, open the map (Journal, optionally use the right-hand tab), select a site, and then pay the fee. [1]'],
+    ['a link inside parentheses', 'To start the floodgate, open the map ([Journal](https://example.com/guide)), select a site, and then pay the fee. [1]'],
+    ['mixed plain and linked citations', 'To start the floodgate, open the valve, and then enter the tunnel. [1] [2](https://example.com/guide)']
   ])('keeps the original text with %s', (_label, answer) => {
     expect(present(answer)).toBe(answer);
   });
@@ -82,15 +102,39 @@ describe('Gaming guide delivery formatting', () => {
       source,
       'Exact prices, additional materials, and later deadlines are not established here.'
     ].join('\n\n');
-    expect(present(answer)).toContain('The supplied excerpts cover the gate, but do not establish exact prices, the later procedure, additional materials, or later deadlines. [1]');
+    const formatted = present(answer);
+    expect(formatted).toContain('1. Open the valve.\n2. Enter the tunnel. [1]\n\n**Limitations**');
+    expect(formatted).toContain('The supplied excerpts cover the gate, but do not establish exact prices, the later procedure, additional materials, or later deadlines. [1]');
+    expect(present(formatted)).toBe(formatted);
   });
 
-  it('does not merge qualifications where the evidence source differs', () => {
-    const [notice, guide, citation, limit, live] = installedColonisationAnswer.split('\n\n');
-    const answer = present(installedColonisationAnswer, { prompt: colonisationRequest, singleSource: false });
-    expect(answer).toContain(notice + '\n\n');
-    expect(answer).toContain(guide.slice(guide.indexOf('The supplied excerpts')));
-    expect(answer).toContain([citation, limit, live].join('\n\n'));
+  it('does not repeat a reference already attached to the instructions during consolidation', () => {
+    const answer = [
+      'To start the floodgate, open the valve, and then enter the tunnel. [1] The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]',
+      source,
+      'Exact prices, additional materials, and later deadlines are not established here.'
+    ].join('\n\n');
+    expect(present(answer)).toContain('1. Open the valve.\n2. Enter the tunnel. [1]\n\n**Limitations**');
+  });
+
+  it('keeps multi-source prose intact when the actions have no directly attached reference', () => {
+    const answer = installedColonisationAnswer + '\n\n**Related source:** [2] [Station guide](https://example.com/station).';
+    expect(present(answer, { prompt: colonisationRequest, singleSource: false })).toBe(answer);
+  });
+
+  it('does not consolidate qualifications across a multi-source answer with cited steps', () => {
+    const answer = [
+      'To start the floodgate, open the valve, and then enter the tunnel. [2] The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]',
+      source,
+      'Exact prices, additional materials, and later deadlines are not established here.'
+    ].join('\n\n');
+    expect(present(answer, { singleSource: false })).toBe([
+      'To start the floodgate:',
+      '1. Open the valve.\n2. Enter the tunnel. [2]',
+      'The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]',
+      source,
+      'Exact prices, additional materials, and later deadlines are not established here.'
+    ].join('\n\n'));
   });
 
   it('preserves composite gap phrases rather than extracting new claims from them', () => {

@@ -637,12 +637,11 @@ it('structures the reconnected installed colonisation answer while preserving it
     expect.stringMatching(/select an unpopulated system within 15 ly/iu),
     expect.stringMatching(/choose the initial station or outpost/iu),
     expect.stringMatching(/pay the registration cost/iu),
-    expect.stringMatching(/launch the claim using your ship’s \*\*System Colonisation Suite\*\*/iu)
+    expect.stringMatching(/launch the claim using your ship’s \*\*System Colonisation Suite\*\*\. \[1\]$/iu)
   ]);
-  expect(content).toContain('This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub.');
+  expect(content).toContain('This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub. [1]');
   const limitations = answer.slice(headings[0].index);
   expect(limitations).toContain('deadlines beyond the initial claim window. [1]');
-  expect(answer.split('[1]')).toHaveLength(3);
   expect(limitations).toMatch(/excerpts explain registration and launching a claim/iu);
   expect(limitations.match(/(?:do not establish|not established)/giu)).toHaveLength(1);
   for (const scope of [/every prerequisite/iu, /later construction procedure/iu, /exact prices/iu,

@@ -8,14 +8,41 @@ const AMBIGUOUS_ACTION = /[\x60[\]<>\\_:;?!*]|\b(?:if|unless|until|when|whenever
 const QUOTE_DELIMITER = /["“”‘]|(?<![\p{L}\p{N}])['’]|['’](?![\p{L}\p{N}])/u;
 const LIST_PROHIBITION = /\b(?:no|without(?: (?:a|any))?|(?:do not|don['’]t) use(?: (?:a|any))?) (?:numbering|(?:numbered )?(?:lists?|bullets)|numbered steps?)\b/iu;
 const PROSE_REQUEST = /\b(?:in (?:prose|(?:a |one |a single )paragraph)|(?:do not|don['’]t) (?:number (?:lists?|numbered steps|the steps|bullets)|use the steps))\b/iu;
-const PROCEDURE = /^(To (?:start|begin|get started with) [^,.\n]{1,140}), ([^.\n]{1,1400})\.(?= |$)/iu;
+const PROCEDURE = /^(To (?:start|begin|get started with) [^,.()\n]{1,140}), ([^.\n]{1,1400})\.(?= |$)/iu;
+const ADJACENT_CITATIONS = /^(?:[ \t]+\[\d+(?:,[ \t]*\d+)*\])+(?=[ \t]|$)/u;
 const INLINE_SOURCE_LIMIT = / (The (?:supplied|selected|available) excerpts) (explain|cover) ([^.!?\n[\]]{1,220}), but do not establish ([^.!?\n[\],;:]{1,220})\. (\[1\])$/u;
 const STANDALONE_SOURCE_LIMIT = /^([A-Z][^.!?\n[\];:]{1,300}) are not established here\.$/u;
 const SINGLE_SOURCE = /^\*\*Source:\*\* \[1\] [^\n[\]]*\[[^\n[\]]+\]\(https:\/\/[^\s)]+\)\.$/u;
 const LIVE_LIMIT = /^I (?:can['’]t|cannot) verify live game state here\.$/u;
 
+/** Only commas outside balanced parentheses can introduce another action. */
+function splitActionClauses(sequence: string): string[] | undefined {
+  const clauses: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < sequence.length; index += 1) {
+    const character = sequence[index];
+    if (character === '(') depth += 1;
+    if (character === ')') {
+      if (depth === 0) return undefined;
+      depth -= 1;
+    }
+    if (depth === 0 && character === ',' && sequence[index + 1] === ' ') {
+      clauses.push(sequence.slice(start, index));
+      start = index + 2;
+    }
+  }
+  if (depth !== 0) return undefined;
+  clauses.push(sequence.slice(start));
+  return clauses;
+}
+
 /** Merge the two reports of gaps in the same excerpt set, retaining its original citation. */
-function consolidateSourceLimits(continuation: string, tail: string[]): { mechanics: string; tail: string[] } {
+function consolidateSourceLimits(continuation: string, tail: string[]): {
+  mechanics: string;
+  tail: string[];
+  sharedCitation?: string;
+} {
   const [source, laterLimit, liveLimit] = tail;
   const inline = INLINE_SOURCE_LIMIT.exec(continuation);
   const standalone = STANDALONE_SOURCE_LIMIT.exec(laterLimit ?? '');
@@ -38,7 +65,8 @@ function consolidateSourceLimits(continuation: string, tail: string[]): { mechan
   const limitations = subject + ' ' + scopeVerb + ' ' + scope + ', but do not establish ' + gapList + '. ' + citation;
   return {
     mechanics: continuation.slice(0, inline.index),
-    tail: ['**Limitations**', limitations, ...(liveLimit ? [liveLimit] : []), source]
+    tail: ['**Limitations**', limitations, ...(liveLimit ? [liveLimit] : []), source],
+    sharedCitation: citation
   };
 }
 
@@ -65,12 +93,14 @@ export function formatGamingGuidePresentation(input: {
   if (QUOTE_DELIMITER.test(procedure[2])) return answer;
 
   const continuation = paragraphs[procedureIndex].slice(procedure[0].length);
-  // A marker immediately after that sentence stays with the list. Leave
-  // more complex citation syntax alone rather than splitting its target.
-  const adjacentCitation = /^ (\[\d+(?:,\s*\d+)*\])(?= |$)/u.exec(continuation);
-  if (continuation.trimStart().startsWith('[') && !adjacentCitation) return answer;
-  const clauses = procedure[2].split(', ');
-  const hasThen = /,\s+(?:and\s+)?then\s+\S/iu.test(procedure[2]);
+  // Keep the entire adjacent citation group together. Leave more complex
+  // citation syntax alone when the plain references cover only part of it.
+  const adjacentCitations = ADJACENT_CITATIONS.exec(continuation)?.[0] ?? '';
+  const remainingProse = continuation.slice(adjacentCitations.length);
+  if ((!singleSource && !adjacentCitations) || /^\s*[[(]/u.test(remainingProse)) return answer;
+  const clauses = splitActionClauses(procedure[2]);
+  if (!clauses) return answer;
+  const hasThen = clauses.slice(1).some(clause => /^(?:and )?then\s+\S/iu.test(clause));
   // The starting instruction can also introduce a complete series of three or
   // more actions with a final “and” and no “then”.
   if (!hasThen) {
@@ -84,10 +114,14 @@ export function formatGamingGuidePresentation(input: {
       || AMBIGUOUS_ACTION.test(action.replace(/\*\*([^*\n]+)\*\*/gu, '$1')))) return answer;
 
   const tail = paragraphs.slice(procedureIndex + 1);
-  const remainingProse = continuation.slice(adjacentCitation?.[0].length ?? 0);
   const formatted = singleSource ? consolidateSourceLimits(remainingProse, tail) : { mechanics: remainingProse, tail };
   const steps = actions.map((action, index) => (index + 1) + '. ' + action[0].toUpperCase() + action.slice(1) + '.').join('\n');
   const mechanics = formatted.mechanics.trim();
-  return [...paragraphs.slice(0, procedureIndex), procedure[1] + ':', steps + (adjacentCitation?.[0] ?? ''),
-    ...(mechanics ? [mechanics] : []), ...formatted.tail].join('\n\n');
+  // Before consolidation the same marker covered the original gameplay
+  // paragraph and its limitation. Retain it on the now-separate blocks.
+  const stepCitations = adjacentCitations || (formatted.sharedCitation ? ' ' + formatted.sharedCitation : '');
+  const mechanicsCitation = formatted.sharedCitation && !mechanics.includes(formatted.sharedCitation)
+    ? ' ' + formatted.sharedCitation : '';
+  return [...paragraphs.slice(0, procedureIndex), procedure[1] + ':', steps + stepCitations,
+    ...(mechanics ? [mechanics + mechanicsCitation] : []), ...formatted.tail].join('\n\n');
 }
