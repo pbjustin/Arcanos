@@ -795,7 +795,7 @@ function validateGamingPresentationIntegrity(
   preLimitationCandidate?: string
 ): ReturnType<typeof validateTrinityAnswerIntegrity> {
   const issues = new Set(validateTrinityAnswerIntegrity(input).issues);
-  if (preLimitationCandidate !== undefined) {
+  if (preLimitationCandidate) {
     for (const issue of validateTrinityAnswerIntegrity({ ...input, text: preLimitationCandidate }).issues) {
       issues.add(issue);
     }
@@ -1262,6 +1262,7 @@ export async function runThroughBrain(
           capabilityFlags,
           outputControls,
           preservePresentation: preserveDirectCandidatePresentation,
+          gamingPresentation: Boolean(gamingPresentationPolicy),
         });
         const directOutputEnforcement = {
           text: honestyFiltered.text,
@@ -1270,7 +1271,7 @@ export async function runThroughBrain(
           outputControls,
           reasoningHonesty,
           preservePresentation: preserveDirectCandidatePresentation,
-          gamingPresentation: Boolean(gamingPresentationPolicy),
+          ...(gamingPresentationPolicy ? { gamingClaimBlocks: honestyFiltered.blockedCategories } : {}),
         };
         let enforcedOutput = enforceFinalStageHonestyAndMinimalism(directOutputEnforcement);
         const preserveDirectOutputPresentation = Boolean(gamingPresentationPolicy) || preserveBookerDirectPresentation
@@ -1304,7 +1305,9 @@ export async function runThroughBrain(
           finalText: text,
           integrity: gamingPresentationPolicy
             ? validateGamingPresentationIntegrity(
-                integrityInput, candidateText, honestyFiltered.blocked, enforcedOutput.preLimitationCandidate
+                integrityInput, candidateText,
+                honestyFiltered.blocked || enforcedOutput.blockedOrRewrittenClaims.length > 0,
+                enforcedOutput.preLimitationCandidate
               )
             : validateTrinityAnswerIntegrity(integrityInput)
         };
@@ -1636,7 +1639,8 @@ export async function runThroughBrain(
         enforcedFinalOutput,
         finalText,
       } = preparedDirectAnswer;
-      const gamingDirectFallbackOnly = Boolean(gamingPresentationPolicy && honestyFilteredFinal.fallbackOnly);
+      const gamingDirectFallbackOnly = Boolean(gamingPresentationPolicy
+        && (honestyFilteredFinal.fallbackOnly || enforcedFinalOutput.preLimitationCandidate === ''));
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -2253,7 +2257,7 @@ export async function runThroughBrain(
       outputControls,
       reasoningHonesty,
       preservePresentation: preserveFinalPresentation,
-      gamingPresentation: Boolean(gamingPresentationPolicy)
+      ...(gamingPresentationPolicy ? { gamingClaimBlocks: honestyFilteredFinal.blockedCategories } : {})
     };
     let enforcedFinalOutput = validateStructuredOutput
       ? { text: honestyFilteredFinal.text, removedMetaSections: [], blockedOrRewrittenClaims: [], preLimitationCandidate: undefined }
@@ -2272,10 +2276,12 @@ export async function runThroughBrain(
     const finalText = enforcedFinalOutput.text;
     if (!validateStructuredOutput) assertTrinityFinalOutputIsPublic(finalText, trustedPolicyPrompt);
     if (gamingPresentationPolicy && finalText !== finalOutput.output) assertGamingPresentationOutputIsPublic(finalText);
-    const gamingFinalFallbackOnly = Boolean(gamingPresentationPolicy && honestyFilteredFinal.fallbackOnly);
+    const gamingFinalFallbackOnly = Boolean(gamingPresentationPolicy
+      && (honestyFilteredFinal.fallbackOnly || enforcedFinalOutput.preLimitationCandidate === ''));
     if (gamingPresentationPolicy && !gamingFinalFallbackOnly && finalText.trim()) {
       const integrity = validateGamingPresentationIntegrity(
-        { text: finalText, reasoningHonesty }, translatedFinalText, honestyFilteredFinal.blocked,
+        { text: finalText, reasoningHonesty }, translatedFinalText,
+        honestyFilteredFinal.blocked || enforcedFinalOutput.blockedOrRewrittenClaims.length > 0,
         enforcedFinalOutput.preLimitationCandidate
       );
       if (!integrity.valid) {

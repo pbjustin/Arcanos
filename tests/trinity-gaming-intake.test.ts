@@ -292,6 +292,69 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     if (keepGuide) expect(result.result).toContain('Turn the west valve. [1]');
   });
 
+  it.each(['compact', 'direct'] as const)('puts %s claim-blocking notices once after the surviving guide', async path => {
+    const guide = 'Turn the west valve to open the return route [1].';
+    const liveLimit = "I can't verify current external state here without live access.";
+    const actionLimit = "I can't confirm backend state or run backend actions here.";
+    const persistenceLimit = "I haven't saved or persisted anything here.";
+    const sourceLimit = 'The guide does not establish the construction requirements.';
+    const candidate = [
+      'I verified the current patch live in-game.',
+      'I called the backend API.',
+      'I saved your preferences.',
+      guide,
+      sourceLimit
+    ].join('\n\n');
+    const input = request();
+    const options = input.context.runOptions as TrinityRunOptions;
+    if (path === 'compact') {
+      runStructuredReasoning.mockResolvedValueOnce({
+        reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
+        alternatives_considered: [], chosen_path_justification: '',
+        response_mode: 'partial_refusal', achievable_subtasks: ['Explain the next step.'],
+        blocked_subtasks: ['Verify current external state.', 'Confirm backend state or run backend actions.'],
+        user_visible_caveats: [sourceLimit, liveLimit, actionLimit],
+        claim_tags: [], final_answer: candidate
+      });
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    } else {
+      delete options.gamingGuideIntakePolicy;
+      options.answerMode = 'direct';
+      options.requestedVerbosity = 'normal';
+      options.maxWords = 120;
+    }
+    responsesCreate.mockResolvedValueOnce(response(candidate, false, authorityModel));
+
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe([guide, sourceLimit, liveLimit, actionLimit, persistenceLimit].join('\n\n'));
+    expect(result.fallbackFlag).toBe(false);
+    expect(result.gamingPresentationPolicy).toBe(GAMING_CLEAR_PRESENTATION_POLICY_VERSION);
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['compact', false], ['compact', true], ['direct', false], ['direct', true]
+  ] as const)('does not count a %s second-pass persistence notice as guidance (guide survives=%s)', async (path, keepGuide) => {
+    const guide = 'Turn the west valve to open the return route [1].';
+    const claim = 'I saved your preferences.';
+    const notice = "I haven't saved or persisted anything here.";
+    const input = request();
+    if (path === 'compact') {
+      responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].'));
+    } else {
+      delete (input.context.runOptions as TrinityRunOptions).gamingGuideIntakePolicy;
+      input.context.runOptions.answerMode = 'direct';
+    }
+    responsesCreate.mockResolvedValueOnce(response(keepGuide ? claim + '\n\n' + guide : claim, false, authorityModel));
+
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe(keepGuide ? guide + '\n\n' + notice : notice);
+    expect(result.fallbackFlag).toBe(!keepGuide);
+    expect(result.gamingPresentationPolicy).toBe(keepGuide ? GAMING_CLEAR_PRESENTATION_POLICY_VERSION : undefined);
+    expect(responsesCreate).toHaveBeenCalledTimes(path === 'compact' ? 2 : 1);
+  });
+
   it('rejects an abrupt hybrid build after one final attempt without an audit or continuation', async () => {
     const malformedAnswer = '1. Turn the west valve.\n\n2. Follow the lit corridor.\n\n3. Use the';
     responsesCreate.mockResolvedValueOnce(response('Compact task card.'))
