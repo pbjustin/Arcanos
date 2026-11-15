@@ -79,6 +79,13 @@ afterEach(() => {
 });
 
 describe('question platform aliases preserve acquired applicability', () => {
+  it('reads a standalone source-wide restriction and keeps quoted restrictions local', () => {
+    const read = (text: string) => extractGamingFreshnessMetadata({ publicUrl: url, text }, { game }, now, rules);
+    expect(read(`${prose} This walkthrough applies only to Xbox 360.`).platforms).toEqual(['Xbox 360']);
+    expect(read(`${prose} "This walkthrough applies only to Xbox 360."`).platforms).toBeUndefined();
+    expect(read(`Platforms: PC. ${prose} This walkthrough applies only to Xbox 360.`).metadataConflict).toBe(true);
+  });
+
   it('matches the inferred PlayStation 5 request to an acquired PS5 guide', () => {
     const platform = resolveGamingQuestionScope(question).platform;
     expect(platform).toBe('PlayStation 5');

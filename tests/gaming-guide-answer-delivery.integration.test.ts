@@ -60,6 +60,8 @@ interface Scenario {
   id: string;
   game: string;
   question: string;
+  progressPoint?: string;
+  spoilerTolerance?: 'light';
   pages: Array<{ url: string; title: string; body: string }>;
   claims: Claim[];
 }
@@ -110,7 +112,19 @@ const scenarios: Scenario[] = [
     claims: [{ url: 'https://heldout-community.example/ivory-clockwork/rainwheel',
       draft: 'At the Amber Locks, close the east sluice, insert the pearl spindle, and turn the rainwheel twice; wait for the blue water indicator before reopening the sluice.',
       answerProbe: /Amber Locks.*east sluice.*pearl spindle.*twice.*blue water indicator/iu,
-      support: [/Amber Locks/iu, /east sluice/iu, /pearl spindle/iu, /twice/iu, /blue water indicator/iu] }] }
+      support: [/Amber Locks/iu, /east sluice/iu, /pearl spindle/iu, /twice/iu, /blue water indicator/iu] }] },
+  {
+    id: 'gta-iv-opening', game: 'Grand Theft Auto IV', question: 'What should I do next?',
+    progressPoint: 'Just got off the boat at the beginning.', spoilerTolerance: 'light',
+    pages: [{ url: 'https://heldout-guides.example/gta-iv/the-cousins-bellic', title: 'Grand Theft Auto IV walkthrough',
+      // Authored summary of the opening mission, based on the BradyGames guide sample.
+      body: '<h2>The Cousins Bellic</h2><p>In the game Grand Theft Auto IV, the first mission starts at the East Hook docks.</p>'
+        + '<p>After the boat docks at the beginning, drive Roman to Hove Beach. Follow the yellow GPS route to Roman’s apartment, then park in the destination marker.</p>' }],
+    claims: [{ url: 'https://heldout-guides.example/gta-iv/the-cousins-bellic',
+      draft: 'Drive Roman to his apartment in Hove Beach. Follow the yellow GPS route and park in the destination marker.',
+      answerProbe: /Hove Beach.*yellow GPS route.*park/iu,
+      support: [/drive Roman to Hove Beach/iu, /yellow GPS route/iu, /park in the destination marker/iu] }]
+  }
 ];
 
 // Paraphrases of starting facts recorded in the retained Frontier acquisition diagnosis.
@@ -358,6 +372,8 @@ function harness(backend: boolean) {
     return response.body.result.structuredContent as { statusCode: number; result: GamingHybridResponse };
   }
   const payload = { contractVersion: 'gaming-hybrid-v2', game: scenario.game, question: scenario.question,
+    ...(scenario.progressPoint ? { progressPoint: scenario.progressPoint } : {}),
+    ...(scenario.spoilerTolerance ? { spoilerTolerance: scenario.spoilerTolerance } : {}),
     idempotencyKey: `heldout-query-${scenario.id}`, storagePolicy: 'transient_only' };
   const query = (overrides: Record<string, unknown> = {}) => invoke('arcanos_gaming_hybrid_query', { ...payload, ...overrides }) as Promise<{ statusCode: number; result: GamingHybridResponse }>;
   /** Follow the granted host-search handoff and submit the authored public URLs. */
@@ -440,11 +456,12 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
     expect(result.result.requirementSupport!.length).toBeGreaterThan(0);
     expect(result.result.requirementSupport!.every(link => link.evidenceIds.every(id => result.result.selectedEvidenceIds!.includes(id)))).toBe(true);
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
-    expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
+    const expectedSearches = fixture.id === 'gta-iv-opening' ? 1 : 2;
+    expect(searches).toHaveLength(expectedSearches); expect(new Set(searches).size).toBe(expectedSearches);
     expect(acquired.sort()).toEqual(fixture.pages.map(page => page.url).sort());
     const callCount = sdk.mock.calls.length;
     expect((await app.query()).result.answer).toEqual(answer);
-    expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(2);
+    expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(expectedSearches);
   });
 
   it('delivers awkward but eligible wording without requesting a quality verdict', async () => {
@@ -779,6 +796,72 @@ it.each([
   expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(finalEvidence.length).toBeGreaterThan(0);
+});
+
+describe('GTA IV opening mission controls', () => {
+  const opening = scenarios.find(fixture => fixture.id === 'gta-iv-opening')!;
+  const page = opening.pages[0];
+
+  async function submit(overrides: Record<string, unknown> = {}) {
+    const app = harness(false);
+    const started = await app.query(overrides);
+    expect(started.result).toMatchObject({ revision: 0, nextAction: 'search' });
+    return app.invoke('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: started.result.workflowId, expectedRevision: 0, idempotencyKey: 'gta-iv-opening-submit',
+      discoveryType: 'gameplay_evidence', candidates: [{ url: page.url }] }) as ReturnType<typeof app.query>;
+  }
+
+  it('retains prose alongside complete and ambiguous records, ignoring related-game navigation', async () => {
+    scenario = opening;
+    sourceSuffix = '<nav><a href="/gta-v">Grand Theft Auto V walkthrough</a><a href="/red-dead">Red Dead Redemption</a></nav>'
+      + '<table><tr><th>Mechanic</th><th>Value</th></tr><tr><td>Parking marker</td><td>Marks the destination.</td></tr></table>'
+      + '<table><tr><th>Value</th><th>Value</th></tr><tr><td>AMBIGUOUS_SENTINEL</td><td>Unknown</td></tr></table>';
+    const result = await submit();
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true });
+    expect(documents[0].structureDiagnostics).toMatchObject({ completeUnits: 1, ambiguousUnits: 1 });
+    const evidence = finalEvidence.map(chunk => chunk.text).join(' ');
+    expect(evidence).toMatch(/drive Roman to Hove Beach/iu);
+    expect(evidence).not.toMatch(/AMBIGUOUS_SENTINEL|Grand Theft Auto V|Red Dead Redemption/iu);
+  });
+
+  it.each(['Red Dead Redemption', 'Grand Theft Auto V'])('withholds %s even though the URL and action text match', async game => {
+    scenario = { ...opening, pages: [{ ...page, title: page.title.replace(opening.game, game),
+      body: page.body.replace(opening.game, game) }] };
+    const result = await submit();
+    expect(evaluations[0].decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('withholds platform-restricted opening instructions on PC', async () => {
+    scenario = opening;
+    sourceSuffix = '<p>This walkthrough applies only to Xbox 360.</p>';
+    const result = await submit({ platform: 'PC' });
+    expect(evaluations[0].decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('withholds truncated instructions and a 403 response even with a matching URL', async () => {
+    scenario = opening;
+    sourceTextLimit = 90;
+    const truncated = await submit();
+    expect(documents[0].metrics.truncated).toBe(true);
+    expect(truncated.result.answer).toBeUndefined();
+    publisher.mockResolvedValueOnce({ status: 403, headers: {}, data: 'Forbidden' });
+    const forbidden = await submit();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] });
+    expect(forbidden.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('withholds a multipart guide when the source only covers the opening drive', async () => {
+    scenario = opening;
+    const result = await submit({ question: 'How do I drive Roman to Hove Beach, and where can I find a rocket launcher?' });
+    expect(result.result).toMatchObject({ coverageSatisfied: false, reason: 'QUESTION_COVERAGE_INSUFFICIENT' });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
 });
 
 it('retains the mandatory coverage gate instead of presenting an unsupported quantity as a qualified answer', async () => {

@@ -338,8 +338,9 @@ The procedure is documented only; this coding PR does not deploy or execute it.
 `gaming-player-retrieval/v1` separates exact question terms from supporting
 area/checkpoint/objective/class/constraint terms. Specific item/boss terms stay
 the relevance anchor; for an ambiguous question such as "What next?", player
-context supplies that anchor. Platform, generic difficulty, edition/version,
-and presentation preferences do not become topical acquisition terms. Candidate
+context supplies that anchor. Common progress phrases such as "just arrived"
+exclude the recency marker "just" from lexical matching. Platform, generic
+difficulty, edition/version, and presentation preferences do not become topical acquisition terms. Candidate
 acquisition is bounded to 16 lexical terms and 20 stored candidates.
 
 The existing 25% topical-coverage floor and 65% coverage/35% normalized SQL-rank
@@ -351,6 +352,8 @@ remain valid, and supplied-guide zero-evidence suppression still blocks an
 unsupported provider call.
 
 Known verified patch mismatches are excluded using existing version comparison.
+An explicit sentence such as "This walkthrough applies only to Xbox 360."
+is subject to the same platform checks as an acquired platform field.
 Unknown edition/version compatibility is not invented. Storage does not provide
 trustworthy general game progression chronology or edition metadata, so the
 policy does not equate chapter/chunk order with progression or apply speculative

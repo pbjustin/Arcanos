@@ -8,7 +8,7 @@ import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
-import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
+import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern } from './gamingPlatformIdentity.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingGameScopedDocument,
   selectGamingSourceEditionScopedEvidence, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
@@ -263,7 +263,8 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   // An excluded structural record never falls back as flattened source prose.
   if (normalized.evidenceUnits !== undefined && !evidenceUnits.length) return null;
   if (acquiredDocument.evidenceUnits.some(unit => unit.fields.some(field => /^(?:platforms?|regions?)$/iu
-    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(acquiredDocument.text)) {
+    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(acquiredDocument.text)
+    || gamingProsePlatformDeclarationPattern().test(acquiredDocument.text)) {
     // Inspect acquired restrictions with no publisher/currentness authority and
     // the original fetch time. Preserve global metadata outside selected rows.
     const applicability = extractGamingFreshnessMetadata(acquiredDocument,

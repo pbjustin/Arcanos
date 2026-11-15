@@ -159,7 +159,11 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
   // Caller state is request context, not evidence or a source compatibility assertion.
   const progressValues = (['currentArea', 'progressPoint', 'lastCompletedObjective'] as const)
     .filter(field => input.contextOrigins?.[field] !== 'tentative' && !input.contextConflicts?.includes(field))
-    .map(field => input[field]).filter(hasUsefulGamingProgressValue);
+    .map(field => field === 'progressPoint'
+      // A conversational recency marker does not describe the gameplay state.
+      ? input[field]?.replace(/^\s*just\s+(?=(?:arrived|got|reached|finished|completed|entered|left)\b)/iu, '')
+      : input[field])
+    .filter(hasUsefulGamingProgressValue);
   const contextTerms = meaningful([
     ...progressValues,
     // Class/build constraints cannot stand in for a missing progression point.

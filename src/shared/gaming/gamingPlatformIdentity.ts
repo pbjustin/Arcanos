@@ -9,6 +9,11 @@ export function normalizeGamingPlatformIdentity(value?: string): string {
   return Object.hasOwn(PLATFORM_ALIASES, key) ? PLATFORM_ALIASES[key] : key;
 }
 
+/** A complete source-wide sentence can state the same restriction as a Platform field. */
+export function gamingProsePlatformDeclarationPattern(): RegExp {
+  return /(?:^|(?<=[.!?;]\s)|(?<=\n))[ \t]{0,16}This (?:guide|walkthrough|article) applies only to (PC|Steam|Xbox 360|Xbox One|Xbox Series [XS]|PlayStation [345]|PS[345]|Nintendo Switch)(?=\.(?:\s|$)|$)/giu;
+}
+
 /** Explicit acquired applicability; absence never establishes a scoped match. */
 export function gamingPlatformEvidenceMatchesRequest(values: readonly string[] | undefined, requested?: string): boolean {
   const wanted = normalizeGamingPlatformIdentity(requested);

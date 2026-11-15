@@ -1,5 +1,5 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
-import { gamingPlatformEvidenceMatchesRequest, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
+import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
@@ -159,6 +159,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   // Shared label prefixes must not leave gameplay record fragments in prose.
   for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
+  applicabilityScope.text = applicabilityScope.text.replace(gamingProsePlatformDeclarationPattern(),
+    (sentence: string, platform: string) => `Platforms: ${platform}`.padStart(sentence.length, ' '));
   const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
