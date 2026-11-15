@@ -56,7 +56,17 @@ export function validateGamingGameRegistry(value: unknown): GamingGameRegistry {
       const headings = new Set<string>();
       for (const topic of entry.guideTopics) {
         if (!record(topic)) fail();
-        allowedKeys(topic, ['heading', 'entities']);
+        allowedKeys(topic, ['heading', 'entities', 'actions']);
+        if (!Array.isArray(topic.actions) || !topic.actions.length || topic.actions.length > 4) fail();
+        for (const action of topic.actions) {
+          if (!record(action)) fail();
+          allowedKeys(action, ['verbs', 'objects']);
+          for (const alternatives of [action.verbs, action.objects]) {
+            if (!literals(alternatives, 16) || !alternatives.length) fail();
+            const identities = alternatives.map(normalizeGamingRegistryIdentity);
+            if (identities.some(identity => !identity) || new Set(identities).size !== identities.length) fail();
+          }
+        }
         if (!literal(topic.heading, 80) || !literals(topic.entities, 4) || topic.entities.length < 2) fail();
         const heading = normalizeGamingRegistryIdentity(topic.heading);
         const entities = topic.entities.map(normalizeGamingRegistryIdentity);

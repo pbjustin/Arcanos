@@ -1014,6 +1014,131 @@ describe('GTA IV opening mission controls', () => {
   });
 });
 
+describe('scoped article corroboration across games through authenticated MCP', () => {
+  interface ScopedGuide {
+    id: string;
+    game: string;
+    foreignGame: string;
+    heading: string;
+    question: string;
+    lead: string;
+    draft: string;
+    probe: RegExp;
+    support: RegExp[];
+  }
+
+  // Authored prose based on Bandai Namco's early-game tips, Nintendo's 2017
+  // combat overview, and the retained Frontier acquisition fixture above.
+  // The protected publisher endpoints below all return synthetic bytes.
+  const guides: ScopedGuide[] = [
+    {
+      id: 'scoped-elden-ring', game: 'Elden Ring', foreignGame: 'Diablo IV', heading: 'Church of Elleh',
+      question: 'How do I upgrade a weapon at the Church of Elleh?',
+      lead: 'At the Church of Elleh, use the Smithing Table and spend Smithing Stones to upgrade an eligible weapon.',
+      draft: 'Use the Smithing Table at the Church of Elleh and spend Smithing Stones to upgrade an eligible weapon.',
+      probe: /Smithing Table.*Church of Elleh.*Smithing Stones.*upgrade an eligible weapon/iu,
+      support: [/Smithing Table/iu, /Church of Elleh/iu, /Smithing Stones/iu, /upgrade an eligible weapon/iu]
+    },
+    {
+      id: 'scoped-xenoblade-2', game: 'Xenoblade Chronicles 2', foreignGame: 'Elden Ring', heading: 'Driver Arts',
+      question: 'How do I recharge Driver Arts?',
+      lead: 'When playing as Rex with Pyra, let his auto-attacks land to recharge Driver Arts.',
+      draft: 'While playing as Rex with Pyra, let his auto-attacks land to recharge Driver Arts.',
+      probe: /Rex with Pyra.*auto-attacks land.*recharge Driver Arts/iu,
+      support: [/Rex with Pyra/iu, /auto-attacks land/iu, /recharge Driver Arts/iu]
+    },
+    {
+      id: 'scoped-elite-dangerous', game: 'Elite Dangerous', foreignGame: 'Portal 2', heading: 'System Colonisation',
+      question: 'How do I begin system colonisation?',
+      lead: 'To begin system colonisation, open the System Colonisation Contact from station services and use the Galaxy Map to select an unpopulated system.',
+      draft: 'Open the System Colonisation Contact from station services. Use the Galaxy Map to select an unpopulated system.',
+      probe: /System Colonisation Contact.*station services.*Galaxy Map.*select an unpopulated system/iu,
+      support: [/System Colonisation Contact/iu, /station services/iu, /Galaxy Map/iu, /select an unpopulated system/iu]
+    }
+  ];
+
+  function scopedScenario(guide: ScopedGuide, labelGame = guide.game, paragraph = '<p>' + guide.lead + '</p>'): Scenario {
+    const url = 'https://heldout-guides.example/scoped/' + guide.id;
+    return {
+      id: guide.id, game: guide.game, question: guide.question, spoilerTolerance: 'light',
+      pages: [{ url, title: guide.heading, includeTitleHeading: false,
+        body: '<header><div>' + labelGame + ' - Guide</div><h1>' + guide.heading + '</h1></header>' + paragraph }],
+      claims: [{ url, draft: guide.draft, answerProbe: guide.probe, support: guide.support }]
+    };
+  }
+
+  async function submitScopedCandidate() {
+    const app = harness(false);
+    const started = await app.query();
+    expect(started.result).toMatchObject({ revision: 0, nextAction: 'search' });
+    return app.invoke('arcanos_gaming_submit_candidates', {
+      contractVersion: 'gaming-hybrid-v2', workflowId: started.result.workflowId, expectedRevision: 0,
+      idempotencyKey: 'submit-' + scenario.id, discoveryType: 'gameplay_evidence',
+      candidates: [{ url: scenario.pages[0].url }]
+    }) as ReturnType<typeof app.query>;
+  }
+
+  it.each(guides)('delivers only the acquired $game lead with a bound citation', async guide => {
+    scenario = scopedScenario(guide);
+    sourceSuffix = '<h2>Later story notes</h2><p>LATER_STORY_SENTINEL. These notes discuss the ending and belong outside this opening.</p>';
+    const result = await harness(false).complete();
+    const evaluation = evaluations.at(-1)!;
+    const url = scenario.pages[0].url;
+    expect(acquired).toEqual([url]);
+    expect(documents.at(-1)?.metadata.articleScope).toEqual({
+      label: guide.game + ' - Guide', heading: guide.heading, lead: guide.lead
+    });
+    expect(documents.at(-1)?.acquisition).toMatchObject({ requestedUrl: url, finalUrl: url });
+    expect(evaluation.decisions).toEqual([expect.objectContaining({ decision: 'accepted_transient', url })]);
+    expect(evaluation.accepted).toHaveLength(1);
+    const [candidate] = evaluation.accepted;
+    expect(candidate.sourceAssessment.gates).toMatchObject({
+      identity: 'verified', claimSupport: 'verified', compatibility: 'verified', provenance: 'verified', security: 'verified'
+    });
+    expect(candidate.sourceAssessment.dimensionScores.alignment.reasonCodes).toContain('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
+    expect(candidate.sourcePolicy).toMatchObject({ authority: 'unreviewed', durableAllowed: false, autoStoreAllowed: false });
+    expect(result).toMatchObject({ statusCode: 200, result: {
+      state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url }] }
+    } });
+    expect(result.result.selectedEvidenceIds).toHaveLength(1);
+    expect(result.result.missingCoverage).toEqual([]);
+    const answer = result.result.answer!;
+    expect(answer.response).toMatch(guide.probe);
+    const sourceNumber = Number(/\[(\d+)\]/u.exec(answer.response)?.[1]);
+    expect(answer.sources[sourceNumber - 1]?.url).toBe(url);
+    const cited = finalEvidence.find(chunk => chunk.sourceIndex === sourceNumber && chunk.url === url);
+    expect(cited?.text).toContain(guide.lead);
+    expect(guide.support.every(probe => probe.test(cited?.text ?? ''))).toBe(true);
+    expect(finalEvidence.map(chunk => chunk.text).join('\n')).not.toContain('LATER_STORY_SENTINEL');
+    expect(answer.response).not.toContain('LATER_STORY_SENTINEL');
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(guides)('rejects the $game lead under a bound $foreignGame scope', async guide => {
+    scenario = scopedScenario(guide, guide.foreignGame);
+    const result = await submitScopedCandidate();
+    expect(documents.at(-1)?.metadata.articleScope).toMatchObject({
+      label: guide.foreignGame + ' - Guide', heading: guide.heading
+    });
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(evaluations.at(-1)!.accepted).toEqual([]);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each(guides)('does not use a quoted $game lead as identity or gameplay proof', async guide => {
+    scenario = scopedScenario(guide, guide.game, '<blockquote><p>' + guide.lead + '</p></blockquote>');
+    const result = await submitScopedCandidate();
+    expect(documents.at(-1)?.metadata.articleScope).not.toHaveProperty('lead');
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(evaluations.at(-1)!.accepted).toEqual([]);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+});
+
 it('retains the mandatory coverage gate instead of presenting an unsupported quantity as a qualified answer', async () => {
   scenario = { ...scenarios[2], question: 'How do I get started with system colonisation, including the required quantum crystal quantity?' };
   const result = await harness(false).complete();

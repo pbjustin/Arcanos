@@ -74,7 +74,6 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
     return choices.length === 1 ? choices[0] : undefined;
   }
   const defaultEdition = entry.editions.find(edition => edition.id === entry.defaultEdition)?.name;
-  if (!defaultEdition) return undefined;
   const expansionNames = entry.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind))
     .flatMap(edition => [edition.name, ...edition.aliases]);
   const named = expansionNames.length ? new RegExp(`\\b(?:${[...new Set(expansionNames)].map(gamingRegistryLiteralPattern).join('|')})\\b`, 'iu') : undefined;
@@ -96,7 +95,9 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
     && [edition.name, ...edition.aliases].some(alias => new RegExp(`\\b${gamingRegistryLiteralPattern(alias)}\\b`, 'iu').test(remaining)));
   if (requested.length === 1) return requested[0].name;
   if (expansionRequested) return undefined;
-  return defaultEdition;
+  // An explicit base-only request is meaningful even when this registered
+  // game has no catalog default. Unspecified requests still receive no scope.
+  return defaultEdition ?? (baseRequested || negativeRequested ? 'base-game' : undefined);
 }
 
 export interface GamingEditionRequestContext {

@@ -145,10 +145,11 @@ URL hints, loose game mentions and quoted references cannot establish it. Known
 game aliases and explicit contradictory game, sequel, expansion or edition
 declarations continue to bind.
 
-For a reviewed mission topic, a visible label in the selected article's own
-header can corroborate identity with the retained mission heading and a
-reviewed opening event. For GTA IV, the article's own opening prose must link
-Niko, Roman, and Liberty City with the arrival by ship. Navigation, image descriptions, neighboring articles,
+For a reviewed gameplay topic, a visible game label in the selected article's
+own header can corroborate identity with the retained topic heading and an
+affirmative claim in the opening prose. The game registry records the entities
+and action-object relationships that can corroborate each topic. All of them
+must be supported by the same claim. Navigation, image descriptions, neighboring articles,
 scattered names, and comparisons cannot supply this proof. Hybrid v2 can use only that intact
 opening passage when it relies on this identity proof. The whole acquired
 article still goes through contradiction and applicability checks. This

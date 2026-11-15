@@ -70,6 +70,25 @@ describe('shared Gaming document acquisition contract', () => {
     expect(isResolvedGamingDocumentIdentityVerified(altered, openingUrl)).toBe(false);
   });
 
+  it('binds article scope through a primary wrapper with a sidebar layout modifier', async () => {
+    const html = '<main class="has-sidebar"><article>' + openingHeader + openingBody + '</article>'
+      + '<aside class="sidebar"><p>Unrelated sidebar content.</p></aside></main>';
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.metadata.articleScope).toEqual({ label: openingLabel, heading: openingHeading, lead: openingLead });
+    expect(document.text).not.toContain('Unrelated sidebar content.');
+  });
+
+  it('does not bind article scope inside a sidebar with a layout modifier', async () => {
+    const html = '<main><div class="sidebar has-sidebar"><article>' + openingHeader + openingBody
+      + '</article></div><p>The main article shows how to change the camera and use the movement controls.</p></main>';
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.metadata.articleScope).toBeUndefined();
+    expect(document.extraction.articleScope).toBeUndefined();
+    expect(document.text).not.toContain(openingHeading);
+  });
+
   it.each([
     ['navigation', '<nav>' + openingHeader + '</nav>' + openingBody, ''],
     ['sidebar', '<div class="sidebar">' + openingHeader + '</div>' + openingBody, ''],

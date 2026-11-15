@@ -272,12 +272,12 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // Runtime Cheerio uses parse5; the repository's legacy ambient types omit its location option.
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
+  preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
   const extractionProfile = gamingDocumentExtractionProfile(input.sourceUrl);
   const originalArticleScope = htmlContent && !input.transportTruncated
     ? readGamingArticleScope($, element => !eligible($, element)
       || (extractionProfile?.removeSelectors ?? []).some(selector => $(element).closest(selector).length > 0))
     : undefined;
-  preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
   if (deadlineExpired()) return result;
   const inspectVisibleResponse = (): string => {
     const visibleBody = $('body').clone();

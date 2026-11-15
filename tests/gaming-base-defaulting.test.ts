@@ -85,6 +85,15 @@ describe('ordinary base-game request interpretation', () => {
     expect(result.accepted[0].sourceContext.edition).toBe('base-game');
     expect(result.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED');
   });
+  it('rejects DLC-required source evidence for an explicit base request on a registered game without a default', async () => {
+    const request = { ...input, game: 'Xenoblade Chronicles 2', prompt: 'Explain the base game combat route.' };
+    const source = 'In the game Xenoblade Chronicles 2, Rex uses Driver Arts and auto-attacks to recharge Arts. This route is DLC-only and requires DLC.';
+    expect(resolveGamingRequestEdition(request)).toBe('base-game');
+    const result = await acquire('', source, 'Xenoblade Chronicles 2 Driver Arts guide', request);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0].decision).toBe('rejected');
+    expect(result.decisions[0].reasonCodes).toContain('EDITION_CONFLICT');
+  });
   it('admits acquired base-game facts for a generic DLC-necessity question', async () => {
     const request = { ...input, prompt: 'Is DLC required to obtain the Uchigatana?' };
     const source = 'In Elden Ring, the Uchigatana is the starting katana for Samurai. Obtain the Uchigatana as starting equipment by selecting Samurai. This starting weapon is available in the base game. Preserve stamina for a dodge after each katana strike.';

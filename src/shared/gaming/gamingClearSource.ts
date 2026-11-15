@@ -1,7 +1,7 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { detectGamingRegistryAlias, gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
   normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext,
-  gamingRegistryLiteralPattern } from './gamingGameRegistry.js';
+  gamingRegistryLiteralPattern, type GamingRegistryGame } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { classifyGamingDocumentQuality, detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
@@ -207,19 +207,22 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
     && evaluated.selectedEvidenceIds.includes(freshness.id);
 }
 
-/** Corroborate a reviewed ship-arrival opening with an attributable gameplay event. */
-function hasCorroboratingGuideLead(lead: string, entities: readonly string[], game: string): boolean {
+/** Corroborate the article subject with an acquired gameplay relationship, including its action and object. */
+function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegistryGame['guideTopics']>[number], game: string): boolean {
   const prose = acquiredBodySubjects(lead);
   if (!prose.complete || /["“”`]|(?<![\p{L}\p{N}])['‘’]/u.test(prose.unquotedText)) return false;
-  const patterns = entities.map(entity =>
-    new RegExp(`(?:^|[^\\p{L}\\p{N}])${gamingRegistryLiteralPattern(entity)}(?=$|[^\\p{L}\\p{N}])`, 'iu'));
+  const literals = (values: readonly string[]) =>
+    `(?<![\\p{L}\\p{N}])(?:${values.map(gamingRegistryLiteralPattern).join('|')})(?![\\p{L}\\p{N}])`;
+  const entities = topic.entities.map(entity => new RegExp(literals([entity]), 'iu'));
+  // An object in a separate phrase (such as "near the table") cannot complete the action.
+  const objectModifiers = String.raw`(?:\s+(?!(?:at|in|on|from|to|near|by|of|off|with|into|onto|beside|around|under|over|through|for|and|or|but|then|where|while|when|after|before|without)\b)[\p{L}\p{N}][\p{L}\p{N}'\u2019-]{0,31}){0,5}\s+`;
+  const actions = topic.actions.map(action => new RegExp(
+    `${literals(action.verbs)}${objectModifiers}${literals(action.objects)}`, 'iu'));
   for (const [, sentence] of prose.unquotedText.matchAll(/(?:^|(?<=[.!?])\s+)([^.!?\r\n]{1,400})\.(?=\s|$)/gu)) {
-    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|might|not|never|instead|versus)\b/iu.test(sentence))
+    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|may|might|maybe|perhaps|possibly|probably|not|no|never|instead|versus|poster|captions?|screenshots?|glossary|index|examples?|hypothetical|references?|mentions?)\b|n['\u2019]t\b/iu.test(sentence))
       continue;
-    const claim = gamingAttributableClaimText(sentence, game);
-    const disembarks = /\b(?:(?:climb|walk|step|hop)(?:s|ed|ing)? off|get(?:s|ting)? off|got off|disembark(?:s|ed|ing)?(?: from)?)\b[^,;]{0,72}\b(?:boat|ship|ferry)\b/iu.test(claim);
-    const arrivesByWater = /\barriv(?:e|es|ed|ing)\s+(?:(?:[\p{L}][\p{L}'-]*\s+){0,5})?(?:by|on|aboard)\s+(?:the\s+|a\s+)?(?:boat|ship|ferry)\b/iu.test(claim);
-    if ((disembarks || arrivesByWater) && patterns.every(entity => entity.test(claim))) return true;
+    const claims = gamingAttributableClaimText(sentence, game).split('\n');
+    if (claims.some(claim => actions.some(action => action.test(claim)) && entities.every(entity => entity.test(claim)))) return true;
   }
   return false;
 }
@@ -350,7 +353,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     ? firstHeading : undefined;
   const articleScope = document.metadata.articleScope;
   const articleGameLabel = articleScope && leadingHeading === articleScope.heading
-    ? /^([^\r\n]{2,110}?)\s+[\u2013\u2014-]\s+(?:(?:story|main|side|campaign)\s+)?(?:mission|quest)\s+(?:guide|walkthrough)$/iu
+    ? /^([^\r\n]{2,110}?)\s+[\u2013\u2014-]\s+(?:(?:(?:story|main|side|campaign)\s+)?(?:mission|quest)\s+|(?:gameplay|combat|equipment|location|mechanics?)\s+)?(?:guide|walkthrough)$/iu
       .exec(articleScope.label)?.[1] : undefined;
   const articleGame = articleGameLabel && detectGamingRegistryAlias(articleGameLabel, true, true);
   const guideTopic = leadingHeading && registryGame?.guideTopics?.find(topic =>
@@ -648,7 +651,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const articleScopeAnchor = allowScopedArticle && input.mode === 'guide'
     && articleGame && articleGame.id === registryGame?.id && guideTopic && articleLead
     && identityProse.slice(0, 2_000).includes(articleLead)
-    && hasCorroboratingGuideLead(articleLead, guideTopic.entities, input.game);
+    && hasCorroboratingGuideLead(articleLead, guideTopic, input.game);
   const existingAnchors = metadataAnchor && (proseAnchor || reviewedDeclaredAssociation) || acquiredBodyScope;
   const anchorsVerified = Boolean((existingAnchors || articleScopeAnchor) && ordinaryWordProof);
   gameIdentityVerified = Boolean(scopeScanComplete && anchorsVerified

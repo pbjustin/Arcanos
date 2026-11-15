@@ -253,3 +253,67 @@ describe('corroborating scoped GTA IV mission evidence', () => {
       .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
 });
+
+describe('scoped article corroboration across games', () => {
+  const fixtures = [
+    { game: 'Grand Theft Auto IV', heading: 'The Cousins Bellic',
+      lead: 'After Niko steps off the boat in Liberty City, Roman hands him the keys.',
+      unrelatedObject: 'Niko climbs off the roof next to a ship in Liberty City, where Roman meets him.',
+      incidental: 'Niko, Roman, and Liberty City appear on a poster showing someone stepping off the boat.' },
+    { game: 'Elden Ring', heading: 'Church of Elleh',
+      lead: 'At the Church of Elleh, use Smithing Stones at the Smithing Table to strengthen your weapon.',
+      unrelatedObject: 'Use the blue lever near Smithing Stones at the Smithing Table in the Church of Elleh.',
+      incidental: 'A gallery caption shows the Church of Elleh, the Smithing Table, and Smithing Stones.' },
+    { game: 'Xenoblade Chronicles 2', heading: 'Driver Arts',
+      lead: "Use auto-attacks with Pyra to recharge Rex's Driver Arts while fighting in range.",
+      unrelatedObject: 'Rex and Pyra recharge the lantern near the Driver Arts display after auto-attacks.',
+      incidental: 'The glossary lists Rex, Pyra, auto-attacks, and Driver Arts.' },
+    { game: 'Elite Dangerous', heading: 'System Colonisation',
+      lead: 'Open the System Colonisation Contact in station services and select an unpopulated star system on the Galaxy Map.',
+      unrelatedObject: 'Use the System Colonisation Contact from station services on the Galaxy Map to select a tab beside a system.',
+      incidental: 'The wiki index lists the System Colonisation Contact, station services, and the Galaxy Map.' }
+  ];
+
+  function assessScoped(fixture: typeof fixtures[number], lead: string, labelGame = fixture.game) {
+    return assessGamingClearSourceIdentity({
+      publicUrl: url,
+      metadata: { title: fixture.heading, headings: fixture.heading,
+        articleScope: { heading: fixture.heading, label: `${labelGame} - Gameplay Guide`, lead } },
+      text: `${fixture.heading} ${lead}`
+    }, { game: fixture.game, mode: 'guide', prompt: 'How do I use this mechanic?' },
+    assessGamingSourcePolicy(url, fixture.game), true);
+  }
+
+  it.each(fixtures)('uses one rule to verify an attributable $game mechanic', fixture => {
+    expect(assessScoped(fixture, fixture.lead))
+      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
+  it('accepts a different wording of a reviewed gameplay relationship', () => {
+    expect(assessScoped(fixtures[0], 'Niko arrives in Liberty City by boat, and Roman waits on the pier.'))
+      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
+  it.each([
+    "Niko doesn't get off the boat in Liberty City, where Roman waits.",
+    'Roman may arrive by boat in Liberty City, where Niko waits.'
+  ])('rejects a negated or uncertain identity claim: %s', lead => {
+    expect(assessScoped(fixtures[0], lead)).toMatchObject({ status: 'unknown', gameIdentityVerified: false });
+  });
+
+  it('requires the action and every entity in the same affirmative claim', () => {
+    for (const lead of [
+      'Use Smithing Stones to reinforce your weapon; the Smithing Table stands in the Church of Elleh.',
+      "Don't use Smithing Stones at the Smithing Table in the Church of Elleh.",
+      'Never use Smithing Stones at the Smithing Table in the Church of Elleh.'
+    ]) expect(assessScoped(fixtures[1], lead)).toMatchObject({ status: 'unknown', gameIdentityVerified: false });
+  });
+
+  it.each(fixtures)('withholds $game references, quoted gameplay, and evidence from another game', fixture => {
+    const foreign = fixtures.find(other => other.game !== fixture.game)!;
+    for (const lead of [fixture.incidental, fixture.unrelatedObject, `"${fixture.lead}"`, `For comparison, ${fixture.lead}`, foreign.lead]) {
+      expect(assessScoped(fixture, lead)).toMatchObject({ status: 'unknown', gameIdentityVerified: false });
+    }
+    expect(assessScoped(fixture, fixture.lead, foreign.game)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+});

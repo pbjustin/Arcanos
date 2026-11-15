@@ -113,6 +113,16 @@ describe('registry config is bounded reviewed literals', () => {
     expect(() => validateGamingGameRegistry({ ...GAMING_GAME_REGISTRY,
       games: [{ ...first, provenance: { ...first.provenance, references: ['secret\ntext'] } }] })).toThrow();
   });
+  it('requires bounded, nonempty literal action alternatives for guide topics', () => {
+    const game = resolveGamingRegistryGame('Grand Theft Auto IV')!;
+    const [topic] = game.guideTopics!;
+    for (const actions of [[], [{ verbs: ['open'], objects: [] }], [{ verbs: ['use', 'USE'], objects: ['item'] }],
+      [{ verbs: ['use'], objects: ['item'], predicate: 'arbitrary code' }]]) {
+      expect(() => validateGamingGameRegistry({ ...GAMING_GAME_REGISTRY, games: [{ ...game, guideTopics: [{ ...topic, actions }] }] }))
+        .toThrow();
+    }
+  });
+
   it('supports an unrelated configured game with the same generic edition algorithm', () => {
     const configured = validateGamingGameRegistry({ version: 'gaming-game-registry/v1', revision: 'test-v1', games: [{
       id: 'configured-workshop-v1', name: 'Synthetic Workshop', aliases: ['Workshop Alpha'], related: [], platforms: ['PC'],
