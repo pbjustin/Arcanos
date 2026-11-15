@@ -194,3 +194,62 @@ describe('independent acquired identity with bounded local comparisons', () => {
       expect(assess('Lantern Voyage', comparison)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
     });
 });
+
+describe('corroborating scoped GTA IV mission evidence', () => {
+  const game = 'Grand Theft Auto IV';
+  const heading = 'The Cousins Bellic';
+  const label = 'GTA IV - Story Mission Guide';
+  const lead = 'After Niko steps off the boat in Liberty City, Roman hands him the keys.';
+  const action = 'Follow the yellow GPS route and drive to the apartment.';
+
+  function assessMission(options: { title?: string; label?: string; scopeHeading?: string; lead?: string; scope?: boolean; scopedLead?: string; scoped?: boolean } = {}) {
+    const document = {
+      publicUrl: 'https://guides.example.org/grand-theft-auto-iv/the-cousins-bellic',
+      metadata: { title: options.title ?? heading, headings: heading,
+        ...(options.scope === false ? {} : { articleScope: { heading: options.scopeHeading ?? heading, label: options.label ?? label,
+          lead: options.scopedLead ?? options.lead ?? lead } }) },
+      text: `${heading} ${options.lead ?? lead} ${action}`
+    };
+    return assessGamingClearSourceIdentity(document,
+      { game, mode: 'guide', prompt: 'What should I do next?' }, assessGamingSourcePolicy(document.publicUrl, game), options.scoped !== false);
+  }
+
+  it('binds a retained mission heading, scoped alias and contextual opening sentence', () => {
+    expect(assessMission())
+      .toMatchObject({ status: 'verified', gameIdentityVerified: true, reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
+  it.each([
+    { scope: false, title: 'GTA IV - The Cousins Bellic - Story Mission Guide' },
+    { scoped: false, title: 'GTA IV - The Cousins Bellic - Story Mission Guide' },
+    { scopeHeading: 'An unrelated mission' },
+    { scopedLead: 'An opening statement with no game information.' },
+    { lead: `${'Observe the training area. '.repeat(90)}${lead}`, scopedLead: lead },
+    { lead: 'Niko, Roman, Liberty City.' },
+    { lead: 'A poster shows Niko and Roman near Liberty City.' },
+    { lead: 'Niko and Roman are two real musicians from Liberty City.' },
+    { lead: 'If Niko and Roman arrive in Liberty City by boat, players could ask them for directions.' },
+    { lead: 'Just like Niko and Roman near Liberty City, your spaceship has a green compass.' },
+    { lead: '“Niko meets Roman near Liberty City.' },
+    { label: 'GTA - Story Mission Guide' },
+    { lead: 'Niko steps off the boat and an unnamed driver picks him up.' },
+    { lead: 'Niko is on a boat. Liberty City is a location. Roman is a character.' },
+    { lead: 'For comparison, Niko arrives in Liberty City and meets Roman.' },
+    { lead: '“Niko steps off the boat in Liberty City and meets Roman.”' },
+    { lead: 'Niko arrives in Liberty City but never meets Roman.' }
+  ])('rejects uncorroborated or incidental evidence: %j', options => {
+    expect(assessMission(options)).toMatchObject({ status: 'unknown', gameIdentityVerified: false });
+  });
+
+  it.each(['GTA VI', 'GTA Vice City', 'GTA IV: The Lost and Damned'])('withholds an unrecognized or narrower article label %s', other => {
+    expect(assessMission({ label: `${other} - Story Mission Guide`, lead: `In the game Grand Theft Auto IV, ${lead}` }))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it.each(['GTA III', 'GTA V', 'GTA V - PS5'])('keeps an affirmative %s article scope contradictory even with all GTA IV entities', wrongGame => {
+    expect(assessMission({ label: `${wrongGame} - Story Mission Guide`, title: 'GTA IV - The Cousins Bellic' }))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    expect(assessMission({ lead: `${lead} In the game ${wrongGame.split(' - ')[0]}, drive to the start point.` }))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+});

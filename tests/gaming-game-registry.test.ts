@@ -58,6 +58,17 @@ describe('versioned game recognition is independent of acquired proof', () => {
     expect(resolveGamingRegistryGame('World of Warcraft')?.provenance.references.length).toBeGreaterThan(0);
     expect(Object.isFrozen(GAMING_GAME_REGISTRY.games)).toBe(true);
   });
+  it('recognizes GTA IV aliases without collapsing III, V, or an unspecified installment', () => {
+    const game = 'Grand Theft Auto IV';
+    for (const alias of ['GTA IV', 'GTA 4', 'Grand Theft Auto 4']) {
+      expect(resolveGamingRegistryGame(alias)?.name).toBe(game);
+      expect(gamingRegistrySourceGameMatchesRequest(alias, game)).toBe(true);
+    }
+    for (const other of ['GTA III', 'GTA 3', 'GTA V', 'GTA 5', 'GTA']) {
+      expect(gamingRegistrySourceGameMatchesRequest(other, game)).toBe(false);
+    }
+  });
+
   it('selects the longest acquired leading title without collapsing relatives', () => {
     expect(detectGamingRegistryAlias('Elden Ring Nightreign guide', true)?.name).toBe('Elden Ring Nightreign');
     expect(detectGamingRegistryAlias('Minecraft Dungeons guide', true)?.name).toBe('Minecraft Dungeons');

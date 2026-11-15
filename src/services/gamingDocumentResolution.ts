@@ -34,7 +34,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v13";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v14";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -84,7 +84,7 @@ export interface ResolvedGamingDocument {
   text: string;
   contentType?: string;
   rawDocument?: FetchAndCleanRawDocument;
-  metadata: { title?: string; headings?: string; applicabilityUnverified?: true;
+  metadata: { title?: string; headings?: string; articleScope?: FetchAndCleanExtractionMetrics['articleScope']; applicabilityUnverified?: true;
     localTopicReferences?: Array<{ start: number; length: number; contentHash: string; gameHash: string }> };
   extraction: FetchAndCleanExtractionMetrics;
   resolution: {
@@ -265,7 +265,8 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
           const selectedTextChars = options.retainFullSelectedText && structure.localTopicReferences?.length
             ? options.maxSelectedTextChars ?? maxChars : maxChars;
           extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, structure.proseBody, response.contentType, selectedTextChars,
-            gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined }), Date.now() - startedAt);
+            gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined,
+              originalArticleScope: structure.originalArticleScope ?? null }), Date.now() - startedAt);
         } catch {
           session.assertActive();
           throw new GamingDocumentAcquisitionError("SOURCE_EXTRACTION_FAILED", "extraction", "DOCUMENT_EXTRACTION_FAILED", transitions.length);
@@ -380,7 +381,9 @@ export async function resolveGamingDocument(
       ...(acquired.structure?.applicabilityUnverified ? { applicabilityUnverified: true as const } : {}),
       ...(projectedReferences.length ? { localTopicReferences: projectedReferences } : {})
     };
-    const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText]
+    const { articleScope, ...ordinaryExtraction } = effectiveExtraction;
+    const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText,
+      articleScope?.label, articleScope?.heading, articleScope?.lead]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)
         !== normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim());
     // Specialized resolvers can return selected prose shorter than their fully
@@ -408,7 +411,17 @@ export async function resolveGamingDocument(
         metadata: safeMetadata, signal: options.signal }));
     const instructionFiltered = projection.instructionFiltered || acquired.structure?.instructionFiltered === true
       || metadataInstructionFiltered || rawInstructionFiltered;
-    options.onExtraction?.(effectiveExtraction);
+    const documentTruncated = projection.truncated || acquired.structure?.diagnostics.truncationStages.includes('extraction') === true;
+    const sourceUseRestricted = acquired.structure?.sourceUseRestricted || rawEvidence?.sourceUseRestricted || decodedSourceUseRestricted;
+    const earlyProse = projection.text.slice(0, 2_048);
+    const leadStart = articleScope?.lead ? earlyProse.indexOf(articleScope.lead) : -1;
+    const leadRetained = leadStart >= 0 && (leadStart === 0 || /\s/u.test(earlyProse[leadStart - 1]));
+    const retainedArticleScope = acquired.finalUrl && articleScope && !instructionFiltered && !sourceUseRestricted
+      && !documentTruncated && !rawDocument?.truncated
+      ? { label: articleScope.label, heading: articleScope.heading, ...(leadRetained ? { lead: articleScope.lead } : {}) }
+      : undefined;
+    const safeExtraction = retainedArticleScope ? { ...ordinaryExtraction, articleScope: retainedArticleScope } : ordinaryExtraction;
+    options.onExtraction?.(safeExtraction);
     if (boundedRaw) options.onRawDocument?.(boundedRaw);
     const canonicalUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;
     const publicUrl = acquired.finalUrl ? projectGamingDocumentPublicUrl(canonicalUrl) : canonicalUrl;
@@ -442,9 +455,9 @@ export async function resolveGamingDocument(
       text: projection.text,
       ...(contentType ? { contentType } : {}),
       ...(boundedRaw ? { rawDocument: boundedRaw } : {}),
-      metadata: safeMetadata,
+      metadata: { ...safeMetadata, ...(retainedArticleScope ? { articleScope: retainedArticleScope } : {}) },
       ...(currentnessDocument ? { currentnessDocument } : {}),
-      extraction: effectiveExtraction,
+      extraction: safeExtraction,
       resolution: {
         resolverId: resolver.id,
         resolverVersion: resolver.version,
@@ -456,15 +469,14 @@ export async function resolveGamingDocument(
       metrics: {
         rawTextLength: effectiveExtraction.rawTextLength,
         cleanedTextLength: projection.cleanedTextLength,
-        truncated: projection.truncated || Boolean(acquired.structure?.diagnostics.truncationStages.includes('extraction')),
+        truncated: documentTruncated,
         instructionFiltered
       },
       ...(acquired.archiveResolution ? { archiveResolution: acquired.archiveResolution } : {}),
       ...(acquisition ? { acquisition } : {}),
       ...(evidenceUnits?.length ? { evidenceUnits } : {}),
       ...(structureDiagnostics ? { structureDiagnostics } : {}),
-      ...(acquired.structure?.sourceUseRestricted || rawEvidence?.sourceUseRestricted || decodedSourceUseRestricted
-        ? { sourceUseRestricted: true } : {}),
+      ...(sourceUseRestricted ? { sourceUseRestricted: true } : {}),
       ...(decodedSourceUseRestricted ? { decodedSourceUseRestricted: true as const } : {})
     };
     if (acquisition) acquisitionAttestations.set(acquisition, documentBinding(document));

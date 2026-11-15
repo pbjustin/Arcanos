@@ -10,6 +10,8 @@ export interface GamingRegistryGame {
   id: string;
   name: string;
   aliases: readonly string[];
+  /** Reviewed article topics and co-occurring entities, used only with acquired article scope. */
+  guideTopics?: readonly { heading: string; entities: readonly string[] }[];
   /** Short ambiguous aliases are case sensitive in prose, but exact requests may resolve them. */
   caseSensitiveAliases?: readonly string[];
   related: readonly { id: string; kind: 'sequel' | 'related' | 'remaster' }[];

@@ -145,6 +145,15 @@ URL hints, loose game mentions and quoted references cannot establish it. Known
 game aliases and explicit contradictory game, sequel, expansion or edition
 declarations continue to bind.
 
+For a reviewed mission topic, a visible label in the selected article's own
+header can corroborate identity with the retained mission heading and a
+reviewed opening event. For GTA IV, the article's own opening prose must link
+Niko, Roman, and Liberty City with the arrival by ship. Navigation, image descriptions, neighboring articles,
+scattered names, and comparisons cannot supply this proof. Hybrid v2 can use only that intact
+opening passage when it relies on this identity proof. The whole acquired
+article still goes through contradiction and applicability checks. This
+opening-only proof does not grant storage or publisher authority.
+
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted
 edition. The answer visibly reports that acquired scope. This allowance requires

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { preservePrimaryContentSidebarLayouts, readGamingArticleScope,
+  type GamingArticleScope } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import { normalizeGamingComparableIdentity } from '@shared/gaming/gamingGameRegistry.js';
 import { gamingAttributableClaimText } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR,
@@ -31,6 +32,7 @@ export interface GamingHtmlLocalTopicReference {
 export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtractionResult {
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
+  originalArticleScope?: GamingArticleScope;
   /** Parser-owned local article references; the resolver retains only bound spans. */
   localTopicReferences?: GamingHtmlLocalTopicReference[];
   /** Layout search exhaustion cannot establish unrestricted source scope. */
@@ -270,6 +272,11 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   // Runtime Cheerio uses parse5; the repository's legacy ambient types omit its location option.
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
+  const extractionProfile = gamingDocumentExtractionProfile(input.sourceUrl);
+  const originalArticleScope = htmlContent && !input.transportTruncated
+    ? readGamingArticleScope($, element => !eligible($, element)
+      || (extractionProfile?.removeSelectors ?? []).some(selector => $(element).closest(selector).length > 0))
+    : undefined;
   preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
   if (deadlineExpired()) return result;
   const inspectVisibleResponse = (): string => {
@@ -905,6 +912,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   });
   result.proseBody = $.html();
   if (deadlineExpired()) return result;
+  if (stream !== 'restored' && originalArticleScope) result.originalArticleScope = originalArticleScope.metadata;
   if (!result.units.length) fail('no_supported_structured_records');
   return result;
 }

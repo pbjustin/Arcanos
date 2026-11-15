@@ -1,6 +1,7 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { detectGamingRegistryAlias, gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
-  normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
+  normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext,
+  gamingRegistryLiteralPattern } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { classifyGamingDocumentQuality, detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
@@ -206,10 +207,27 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
     && evaluated.selectedEvidenceIds.includes(freshness.id);
 }
 
+/** Corroborate a reviewed ship-arrival opening with an attributable gameplay event. */
+function hasCorroboratingGuideLead(lead: string, entities: readonly string[], game: string): boolean {
+  const prose = acquiredBodySubjects(lead);
+  if (!prose.complete || /["“”`]|(?<![\p{L}\p{N}])['‘’]/u.test(prose.unquotedText)) return false;
+  const patterns = entities.map(entity =>
+    new RegExp(`(?:^|[^\\p{L}\\p{N}])${gamingRegistryLiteralPattern(entity)}(?=$|[^\\p{L}\\p{N}])`, 'iu'));
+  for (const [, sentence] of prose.unquotedText.matchAll(/(?:^|(?<=[.!?])\s+)([^.!?\r\n]{1,400})\.(?=\s|$)/gu)) {
+    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|might|not|never|instead|versus)\b/iu.test(sentence))
+      continue;
+    const claim = gamingAttributableClaimText(sentence, game);
+    const disembarks = /\b(?:(?:climb|walk|step|hop)(?:s|ed|ing)? off|get(?:s|ting)? off|got off|disembark(?:s|ed|ing)?(?: from)?)\b[^,;]{0,72}\b(?:boat|ship|ferry)\b/iu.test(claim);
+    const arrivesByWater = /\barriv(?:e|es|ed|ing)\s+(?:(?:[\p{L}][\p{L}'-]*\s+){0,5})?(?:by|on|aboard)\s+(?:the\s+|a\s+)?(?:boat|ship|ferry)\b/iu.test(claim);
+    if ((disembarks || arrivesByWater) && patterns.every(entity => entity.test(claim))) return true;
+  }
+  return false;
+}
+
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode' | 'requestedVersion'>,
-  policy: GamingSourcePolicyAssessment, _allowPartialCoverage = false): GamingSourceIdentityAssessment {
+  policy: GamingSourcePolicyAssessment, allowScopedArticle = false): GamingSourceIdentityAssessment {
   let gameIdentityVerified = false;
   const result = (status: GamingSourceIdentityAssessment['status'], reason: string, ruleId: string,
     evidenceCategory: GamingSourceIdentityDiagnostic['evidenceCategory'],
@@ -330,6 +348,17 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     && /^(?:\s|[.!?:;]|$)/u.test(acquiredStart.slice(firstHeading.length))
     && !/^(?:unlike|compared|comparison|contrast|rather\s+than|instead\s+of|like|not|recommended|related|read\s+next)\b/iu.test(firstHeading)
     ? firstHeading : undefined;
+  const articleScope = document.metadata.articleScope;
+  const articleGameLabel = articleScope && leadingHeading === articleScope.heading
+    ? /^([^\r\n]{2,110}?)\s+[\u2013\u2014-]\s+(?:(?:story|main|side|campaign)\s+)?(?:mission|quest)\s+(?:guide|walkthrough)$/iu
+      .exec(articleScope.label)?.[1] : undefined;
+  const articleGame = articleGameLabel && detectGamingRegistryAlias(articleGameLabel, true, true);
+  const guideTopic = leadingHeading && registryGame?.guideTopics?.find(topic =>
+    normalizeGamingGameIdentity(leadingHeading) === normalizeGamingGameIdentity(topic.heading));
+  const articleGameFamily = articleGameLabel && detectGamingRegistryAlias(articleGameLabel, true);
+  const uncertainArticleGame = articleGameLabel && (articleGameFamily || guideTopic) && !sourceGameMatches(articleGameLabel);
+  if (articleGameFamily && !sourceGameMatches(articleGameFamily.name))
+    return result('conflict', 'GAME_MISMATCH', 'gaming.identity.acquired_article_scope_conflict', 'body_heading');
   const subjects = [
     ...(document.metadata.title ? [{ value: document.metadata.title, category: 'document_title' as const }] : []),
     ...(leadingHeading ? [{ value: leadingHeading, category: 'body_heading' as const }] : [])
@@ -615,9 +644,15 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
           && currentness.releaseActive === true && currentness.reasons.every(reason => reason === 'ARTICLE_IS_NOT_CURRENT_INDEX')));
   const reviewedDeclaredAssociation = reviewedReleaseOwnership || Boolean(policy.ruleId)
     && ['official', 'specialist', 'community'].includes(policy.authority) && acquiredGlobalGame;
-  const anchorsVerified = Boolean((metadataAnchor && (proseAnchor || reviewedDeclaredAssociation) || acquiredBodyScope) && ordinaryWordProof);
+  const articleLead = articleScope?.lead;
+  const articleScopeAnchor = allowScopedArticle && input.mode === 'guide'
+    && articleGame && articleGame.id === registryGame?.id && guideTopic && articleLead
+    && identityProse.slice(0, 2_000).includes(articleLead)
+    && hasCorroboratingGuideLead(articleLead, guideTopic.entities, input.game);
+  const existingAnchors = metadataAnchor && (proseAnchor || reviewedDeclaredAssociation) || acquiredBodyScope;
+  const anchorsVerified = Boolean((existingAnchors || articleScopeAnchor) && ordinaryWordProof);
   gameIdentityVerified = Boolean(scopeScanComplete && anchorsVerified
-    && !clippedPrimaryHeading);
+    && !clippedPrimaryHeading && !uncertainArticleGame);
   // A definitive acquired applicability contradiction remains terminal without
   // turning absent independent game proof into a verified identity outcome.
   if (editionScopeConflict)
@@ -628,6 +663,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     gameIdentityVerified = false;
     return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.family_scope_unverified', 'body_scope');
   }
+  if (uncertainArticleGame)
+    return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.acquired_article_scope_unverified', 'body_heading');
   if (!anchorsVerified)
     return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.independent_anchor_required', 'acquired_anchors',
       uncorroboratedArticleSubject ? { subjectKind: 'article_topic', scope: 'unknown' } : {});
@@ -668,8 +705,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
     }
   }
-  return result('verified', acquiredBodyScope ? 'ACQUIRED_BODY_SCOPE_IDENTITY' : ordinaryTitle ? 'ACQUIRED_TITLE_AND_PASSAGE_IDENTITY'
-    : 'ACQUIRED_METADATA_AND_BODY_IDENTITY', 'gaming.identity.acquired_anchors_verified', 'acquired_anchors');
+  return result('verified', !existingAnchors && articleScopeAnchor ? 'ACQUIRED_ARTICLE_SCOPE_IDENTITY'
+    : acquiredBodyScope ? 'ACQUIRED_BODY_SCOPE_IDENTITY' : ordinaryTitle ? 'ACQUIRED_TITLE_AND_PASSAGE_IDENTITY'
+      : 'ACQUIRED_METADATA_AND_BODY_IDENTITY', 'gaming.identity.acquired_anchors_verified', 'acquired_anchors');
+}
+
+/** Narrative corroboration attests the intact opening only, even when the full article was fetched.
+ * The heading is acquired text. Its paragraph break preserves the original lead as one unit for passage selection. */
+export function gamingClearScopedArticleText(document: Pick<ResolvedGamingDocument, 'metadata'>, scopedText: string): string {
+  const scope = document.metadata.articleScope;
+  return scope?.lead && scopedText.includes(scope.lead) ? `${scope.heading}\n\n${scope.lead}` : '';
 }
 
 export function gamingClearSourceRole(input: Pick<GamingStoredKnowledgeInput, 'mode'>,
@@ -694,7 +739,10 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const scoped = selectGamingSourceEditionScopedEvidence(selectedDocument, input, options.freshness.edition);
   const qualifiedSourceEdition = !input.edition && options.freshness.edition
     && gamingEditionEvidenceMatchesRequest(options.freshness.edition, undefined, input);
-  const evidenceDocument = scoped.status === 'verified' ? { ...selectedDocument, text: scoped.text, evidenceUnits: scoped.units } : selectedDocument;
+  const applicableDocument = scoped.status === 'verified' ? { ...selectedDocument, text: scoped.text, evidenceUnits: scoped.units } : selectedDocument;
+  const evidenceDocument = identity.reasonCodes.includes('ACQUIRED_ARTICLE_SCOPE_IDENTITY')
+    ? { ...applicableDocument, text: gamingClearScopedArticleText(document, applicableDocument.text), evidenceUnits: [] }
+    : applicableDocument;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(evidenceDocument);
   const proseText = gamingAttributableClaimText(gamingClearIntactProseText(evidenceDocument), input.game, evidenceDocument.metadata);
@@ -779,5 +827,6 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   });
   // Applicability established for individual records cannot authorize storing the
   // original whole page as base-game content. The existing storage gate enforces this.
-  return gameScoped.status === 'projected' || scoped.status === 'verified' || qualifiedSourceEdition ? { ...assessment, qualityEligible: false } : assessment;
+  return evidenceDocument !== applicableDocument || gameScoped.status === 'projected' || scoped.status === 'verified' || qualifiedSourceEdition
+    ? { ...assessment, qualityEligible: false } : assessment;
 }

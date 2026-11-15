@@ -1,5 +1,6 @@
 import { GAMING_PRIMARY_CONTENT_SELECTORS, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT as MAX_EXTRACTION_SELECTORS,
-  preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
+  GAMING_ARTICLE_REGION_SELECTOR, preservePrimaryContentSidebarLayouts, readGamingArticleScope,
+  type GamingArticleScope } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -386,6 +387,8 @@ export interface FetchAndCleanOptions {
   primaryContentSelectors?: readonly string[];
   /** Gaming keeps an acquired enclosing article/main subject when selecting its inner prose body. */
   preservePrimaryContentHeading?: boolean;
+  /** Server-owned original scope witness when extraction receives a transformed HTML projection. */
+  originalArticleScope?: GamingArticleScope | null;
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
@@ -439,6 +442,7 @@ export interface FetchAndCleanExtractionMetrics {
   candidateCount?: number;
   documentTitle?: string;
   headingText?: string;
+  articleScope?: GamingArticleScope;
 }
 
 function normalizeExtractedText(value: string): string {
@@ -815,6 +819,8 @@ export function extractFetchAndCleanDocument(
       try { return Boolean($(element).closest(selector).length); } catch { return false; }
     });
   };
+  const scopedArticle = options.preservePrimaryContentHeading && options.originalArticleScope
+    ? readGamingArticleScope($, headingDenied) : undefined;
   for (const selector of removeSelectors) {
     try {
       if (options.preservePrimaryContentHeading && selector === 'header') {
@@ -972,6 +978,13 @@ export function extractFetchAndCleanDocument(
   const cleanedText = options.retainFullSelectedText ? selectedText.slice(0, boundedMaxChars) : selectedText;
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
+  const originalScope = options.originalArticleScope;
+  const articleScope = scopedArticle && originalScope && selectedCandidate.element && cleanedText === selectedText
+    && $(selectedCandidate.element).closest(GAMING_ARTICLE_REGION_SELECTOR).get(0) === scopedArticle.article
+    && scopedArticle.metadata.label === originalScope.label && scopedArticle.metadata.heading === originalScope.heading
+    ? { label: originalScope.label, heading: originalScope.heading,
+        ...(originalScope.lead && scopedArticle.metadata.lead === originalScope.lead ? { lead: originalScope.lead } : {}) }
+    : undefined;
 
   options.onExtraction?.({
     strategy: extractionStrategy,
@@ -986,7 +999,8 @@ export function extractFetchAndCleanDocument(
     linkDensity: roundUnitMetric(selectedCandidate.linkDensity),
     candidateCount: candidates.length,
     ...(documentTitle ? { documentTitle } : {}),
-    ...(headingText ? { headingText } : {})
+    ...(headingText ? { headingText } : {}),
+    ...(articleScope ? { articleScope } : {})
   });
 
   const seenLinks = new Set<string>();

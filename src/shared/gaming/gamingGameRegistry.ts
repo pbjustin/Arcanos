@@ -46,11 +46,25 @@ export function validateGamingGameRegistry(value: unknown): GamingGameRegistry {
   const aliases = new Map<string, string>();
   for (const entry of value.games) {
     if (!record(entry)) fail();
-    allowedKeys(entry, ['id', 'name', 'aliases', 'caseSensitiveAliases', 'related', 'editions', 'platforms', 'defaultEdition', 'provenance']);
+    allowedKeys(entry, ['id', 'name', 'aliases', 'caseSensitiveAliases', 'related', 'editions', 'platforms', 'defaultEdition', 'provenance', 'guideTopics']);
     if (!literal(entry.id, 80) || !/^[a-z][a-z0-9-]*$/u.test(entry.id) || ids.has(entry.id)
       || !literal(entry.name) || !literals(entry.aliases) || !literals(entry.platforms, 8)
       || entry.caseSensitiveAliases !== undefined && (!literals(entry.caseSensitiveAliases)
         || !entry.caseSensitiveAliases.every(alias => (entry.aliases as string[]).includes(alias)))) fail();
+    if (entry.guideTopics !== undefined) {
+      if (!Array.isArray(entry.guideTopics) || entry.guideTopics.length > 8) fail();
+      const headings = new Set<string>();
+      for (const topic of entry.guideTopics) {
+        if (!record(topic)) fail();
+        allowedKeys(topic, ['heading', 'entities']);
+        if (!literal(topic.heading, 80) || !literals(topic.entities, 4) || topic.entities.length < 2) fail();
+        const heading = normalizeGamingRegistryIdentity(topic.heading);
+        const entities = topic.entities.map(normalizeGamingRegistryIdentity);
+        if (!heading || headings.has(heading) || entities.some(entity => !entity)
+          || new Set(entities).size !== entities.length) fail();
+        headings.add(heading);
+      }
+    }
     ids.add(entry.id);
     for (const name of [entry.id, entry.name, ...entry.aliases]) {
       const normalized = normalizeGamingRegistryIdentity(name);
