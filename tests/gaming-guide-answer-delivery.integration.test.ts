@@ -4,7 +4,10 @@ import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
-import { colonisationReasoningTasks, colonisationRequest, malformedColonisationCapabilityParagraph } from './testUtils/gamingPresentationRegressionFixture.js';
+import {
+  colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer,
+  latestLiveColonisationAnswer, malformedColonisationCapabilityParagraph, numberedLiveColonisationAnswer
+} from './testUtils/gamingPresentationRegressionFixture.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 // Guide-delivery, authored SYNTHETIC material. These fixtures make no claim that the
@@ -151,7 +154,8 @@ const presentationVersion = 'gaming-clear-presentation/v1';
 const finalOutputs: string[] = [];
 const finalEvidence: Array<{ sourceIndex: number; url: string; text: string }> = [];
 let presentSteps = false;
-let replayColonisationTasks: 'none' | 'observed' | 'structured' = 'none';
+let replayColonisationTasks: 'none' | 'observed' | 'structured' | 'live-verification' = 'none';
+let replayColonisationAnswer: string | undefined;
 let partialRefusalWithSourceGap = false;
 let awkwardAnswer = false;
 const fixtureMeasurements: Array<Record<string, unknown>> = [];
@@ -222,6 +226,7 @@ beforeEach(() => {
   finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
   replayColonisationTasks = 'none';
+  replayColonisationAnswer = undefined;
   partialRefusalWithSourceGap = false;
   omitFinalCitations = false;
   stages.length = 0; searches.length = 0; acquired.length = 0; finalOutputs.length = 0; finalEvidence.length = 0; documents.length = 0; evaluations.length = 0;
@@ -271,7 +276,10 @@ beforeEach(() => {
           blocked_subtasks: ['Establish how to repair a damaged spindle.'],
           user_visible_caveats: ['The selected passage does not establish how to repair a damaged spindle.']
         } : {}),
-        ...(replayColonisationTasks !== 'none' ? colonisationReasoningTasks : {}),
+        ...(replayColonisationTasks === 'observed' || replayColonisationTasks === 'structured' ? colonisationReasoningTasks : {}),
+        ...(replayColonisationTasks === 'live-verification' ? {
+          response_mode: 'partial_refusal', blocked_subtasks: ['Verify current live game state.']
+        } : {}),
         ...(replayColonisationTasks === 'structured' ? { user_visible_caveats: [colonisationSourceLimit] } : {}),
         final_answer: draft(payload) });
     } else if (input.includes('Gaming guide intake policy: compact-v1')) {
@@ -289,7 +297,7 @@ beforeEach(() => {
         case 'warning_only': output = partialExtractionWarning; break;
         case 'echoed_warning': output = `${partialExtractionWarning}\n\n${capabilityRefusal}`; break;
         default:
-          output = draft(payload, true);
+          output = replayColonisationAnswer ?? draft(payload, true);
           if (finalCapabilityRefusal === 'with_guidance') output = `${finalRefusalText}\n\n${output}`;
       }
       if (citeFallback) output += useNumberedLink ? ` [1](${scenario.pages[0].url})` : ' [1]';
@@ -598,6 +606,104 @@ it.each(['observed', 'structured'] as const)('delivers the original colonisation
     expect(answer.split('\n\n')[0]).toBe(steps.join('\n') + ' [1]');
   }
   expect(answer).toMatch(/current patch compatibility could not be verified/iu);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('preserves the reconnected installed replay without borrowing the source limitation citation', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationAnswer = installedColonisationAnswer;
+  const result = await harness(false).complete();
+
+  expect(result.result.state === 'answer_ready' ? undefined : {
+    reason: result.result.reason, accepted: evaluations.flatMap(value => value.accepted).length,
+    missing: result.result.missingCoverage, stages
+  }).toBeUndefined();
+  expect(finalOutputs).toEqual([installedColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true, answer: { sources: [{ url: frontierGuideUrl }] }
+  });
+  expect(result.result.selectedEvidenceIds).toHaveLength(2);
+  expect(finalEvidence.some(evidence => evidence.sourceIndex === 1 && evidence.url === frontierGuideUrl)).toBe(true);
+  const answer = result.result.answer!.response;
+  expect(answer.startsWith(partialExtractionWarning + '\n\n')).toBe(true);
+  expect(answer.split(partialExtractionWarning)).toHaveLength(2);
+
+  expect(answer).toBe(installedColonisationAnswer);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('preserves the exact isolated replay with a paragraph-level citation', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationAnswer = isolatedColonisationAnswer;
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([isolatedColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true, answer: { sources: [{ url: frontierGuideUrl }] }
+  });
+  expect(result.result.answer?.response).toBe(isolatedColonisationAnswer);
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+});
+
+it('preserves the latest exact live replay when splitting could narrow citation scope', async () => {
+  scenario = frontierStartingFixture;
+  replayColonisationAnswer = latestLiveColonisationAnswer;
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([latestLiveColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: {
+      sources: [{ url: frontierGuideUrl }],
+      response: latestLiveColonisationAnswer
+    }
+  });
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it('numbers the colonisation replay when the procedure has an explicit adjacent citation', async () => {
+  scenario = frontierStartingFixture;
+  const [notice, guide, ...tail] = latestLiveColonisationAnswer.split('\n\n');
+  replayColonisationAnswer = latestLiveColonisationAnswer.replace('registration cost. This reserves', 'registration cost. [1] This reserves');
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([replayColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: {
+      response: [
+        notice,
+        'To start system colonisation in **Elite Dangerous**:',
+        '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within **15 ly**.\n'
+          + '2. Choose your initial starport or orbital outpost.\n3. Pay the registration cost. [1]',
+        guide.slice(guide.indexOf('This reserves')),
+        ...tail
+      ].join('\n\n'),
+      sources: [{ url: frontierGuideUrl }]
+    }
+  });
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it.each([
+  ['appends a required caveat', 'live-verification', false],
+  ['receives both caveats from the provider', 'live-verification', true],
+  ['receives both caveats with no blocked tasks', 'none', true]
+] as const)('retains the exact numbered live replay with one live-game caveat when Trinity %s', async (_label, tasks, complete) => {
+  scenario = frontierStartingFixture;
+  replayColonisationTasks = tasks;
+  replayColonisationAnswer = complete
+    ? numberedLiveColonisationAnswer
+    : numberedLiveColonisationAnswer.slice(0, -"\n\nI can't verify live game state here.".length);
+  const expected = numberedLiveColonisationAnswer.replace(
+    '; current live-game changes have not been checked.\n\n', '. ');
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([replayColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: { response: expected, sources: [{ url: frontierGuideUrl }] }
+  });
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(sdk).toHaveBeenCalledTimes(3);
 });

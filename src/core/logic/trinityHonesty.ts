@@ -1502,13 +1502,16 @@ function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoni
 function applyGamingLimitations(
   text: string, reasoningHonesty: TrinityReasoningHonesty, caveats: string[]
 ): string {
-  if (caveats.length === 0 && reasoningHonesty.blockedSubtasks.length === 0) return text.trim();
+  const draft = text.trimEnd();
+  const liveDisclaimerPattern = /(?:^|\r?\n[ \t]*\r?\n)(?<block>(?:(?<attribution>This guidance follows the supplied official guide excerpts); )?current live[- ]game changes have not been (?:checked|verified|confirmed)\.(?:\r?\n[ \t]*\r?\n(?<authored>I (?:can['’]t|cannot) verify live game state here\.)(?=\r?\n[ \t]*\r?\n|$)|$))/iu;
+  if (caveats.length === 0 && reasoningHonesty.blockedSubtasks.length === 0 && !liveDisclaimerPattern.test(draft)) return draft.trim();
 
+  const genericLiveStateCaveat = "I can't verify live game state here.";
   const capabilityLimitations = [
     { task: /^browse\b/i, caveat: "I can't browse for additional sources here." },
     { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b.*\bplatform availability\b/i,
       caveat: "I can't verify live game state or platform availability here." },
-    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: "I can't verify live game state here." },
+    { task: /^(?:verify|confirm|check)\b.*\b(?:live|current|external)\b/i, caveat: genericLiveStateCaveat },
     { task: /^(?:run|execute|perform|call|deploy)\s+(?:the\s+)?(?:backend|commands?|scripts?|tools?|actions?)\b/i,
       caveat: "I can't execute actions here." },
     { task: /^(?:save|persist|store)\s+(?:the\s+|your\s+)?(?:information|data|preferences|progress|notes?|details|this)\b/i,
@@ -1519,14 +1522,17 @@ function applyGamingLimitations(
   const capabilityScope = (value: string) => normalizeCaveat(value)
     .replace(/^i can't /u, '').replace(/ here(?: without live access)?$/u, '');
   let fence: string | undefined;
-  const prose = text.split(/\r?\n/u).map(line => {
+  const lines = draft.split(/(\r?\n)/u);
+  const plainLines = lines.map((line, index) => {
+    if (index % 2 === 1) return line;
     const marker = /^ {0,3}(\x60{3,}|~{3,})/u.exec(line)?.[1];
     if (marker && (!fence || (marker.startsWith(fence) && line.trim() === marker))) {
       fence = fence ? undefined : marker;
-      return '';
+      return undefined;
     }
-    return fence || /^(?: {4}|\t| {0,3}>)/u.test(line) ? '' : line;
-  }).join('\n');
+    return fence || /^(?: {4}|\t| {0,3}>)/u.test(line) ? undefined : line;
+  });
+  const prose = plainLines.map((line, index) => index % 2 === 1 ? '\n' : line).join('');
   const existing = new Set(prose.split(/\n[ \t]*\n/u).flatMap(paragraph =>
     [paragraph, ...splitIntoSegments(paragraph)]).map(normalizeCaveat));
   const statedCapabilities = new Set([...existing, ...caveats.map(normalizeCaveat)]
@@ -1547,11 +1553,23 @@ function applyGamingLimitations(
     caveats.push('The available evidence does not establish every requested detail.');
   }
 
-  // Preserve the provider's exact Markdown and citations. Compare complete
-  // caveats, since different facts can have limitations of the same category.
   const missing = new Map(caveats.filter(caveat => !existing.has(normalizeCaveat(caveat)))
     .map(caveat => [normalizeCaveat(caveat), caveat]));
-  return [text.trim(), ...missing.values()].filter(Boolean).join('\n\n');
+  let answer = draft;
+  // Mask non-prose without shifting offsets or treating it as a blank line.
+  const visible = plainLines.map((line, index) => line ?? '\0'.repeat(lines[index].length)).join('');
+  const liveDisclaimer = liveDisclaimerPattern.exec(visible);
+  if (liveDisclaimer?.groups) {
+    const { block, attribution, authored } = liveDisclaimer.groups;
+    // Raw HTML can quote or hide a paragraph. Leave authored pairs intact in that case.
+    const hasRawMarkup = authored && /<(?:!--|\/?[a-z][a-z\d-]*(?=[\s/>]))/iu.test(visible);
+    if (!hasRawMarkup && (missing.delete(normalizeCaveat(genericLiveStateCaveat)) || authored)) {
+      const end = liveDisclaimer.index + liveDisclaimer[0].length;
+      answer = draft.slice(0, end - block.length)
+        + (attribution ? attribution + '. ' : '') + (authored ?? genericLiveStateCaveat) + draft.slice(end);
+    }
+  }
+  return [answer.trim(), ...missing.values()].filter(Boolean).join('\n\n');
 }
 
 function isOpeningPaddingSegment(segment: string): boolean {

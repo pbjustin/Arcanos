@@ -1037,6 +1037,14 @@ When the selected source was partially extracted, delivery retains the exact
 standalone notice. Repeated copies in the leading notice block are collapsed,
 while distinct qualifications and quoted source text are preserved.
 
+For explicit starting instructions and walkthroughs, delivery can turn a clear
+sequence of prose actions into numbered steps unless the player requests
+prose. Delivery can group limitations without changing their wording or moving
+an uncited limitation under a source citation. It removes repeated limitations
+when their text and citation match. The backend validates citations before and
+after formatting and binds the delivered text to the selected evidence.
+Ambiguous sentence boundaries and action order stay in the generated format.
+
 Gaming retains its existing audit-content redaction and optional-side-effect
 suppression. The Gaming live validation contract and separately authorized
 isolated acceptance procedure are documented in
