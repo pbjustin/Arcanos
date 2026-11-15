@@ -16,6 +16,9 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics;
   applicabilityUnverified?: true;
   originalArticleScope?: GamingArticleScope;
+  articleScopeAssertions?: string[];
+  articleScopeHeading?: string;
+  articleScopeUnverified?: true;
   localTopicReferences?: GamingHtmlLocalTopicReference[] } {
   const startedAt = Date.now();
   const html = extractGamingHtmlEvidence(input);
@@ -59,8 +62,12 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   const truncated = html.truncated || json.truncated || capped;
   return { units, proseBody, instructionFiltered, sourceUseRestricted,
     ...(html.applicabilityUnverified ? { applicabilityUnverified: true } : {}),
-    ...(!truncated && !instructionFiltered && !sourceUseRestricted && html.originalArticleScope
-      ? { originalArticleScope: html.originalArticleScope } : {}),
+    ...(!truncated && !instructionFiltered && !sourceUseRestricted ? {
+      ...(html.originalArticleScope ? { originalArticleScope: html.originalArticleScope } : {}),
+      ...(html.articleScopeHeading ? { articleScopeHeading: html.articleScopeHeading } : {}),
+      ...(html.articleScopeAssertions ? { articleScopeAssertions: html.articleScopeAssertions } : {}),
+      ...(html.articleScopeUnverified ? { articleScopeUnverified: true } : {})
+    } : {}),
     ...(html.localTopicReferences?.length ? { localTopicReferences: html.localTopicReferences } : {}), diagnostics: {
     policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
     strategies: [...new Set(['prose', ...html.attempts, ...json.attempts])].slice(0, 8),

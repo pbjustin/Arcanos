@@ -1,5 +1,5 @@
 import { GAMING_PRIMARY_CONTENT_SELECTORS, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT as MAX_EXTRACTION_SELECTORS,
-  GAMING_ARTICLE_REGION_SELECTOR, preservePrimaryContentSidebarLayouts, readGamingArticleScope,
+  GAMING_ARTICLE_REGION_SELECTOR, preservePrimaryContentSidebarLayouts, readGamingArticleOwner, readGamingArticleScope,
   type GamingArticleScope } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
@@ -389,6 +389,7 @@ export interface FetchAndCleanOptions {
   preservePrimaryContentHeading?: boolean;
   /** Server-owned original scope witness when extraction receives a transformed HTML projection. */
   originalArticleScope?: GamingArticleScope | null;
+  originalArticleHeading?: string;
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
@@ -443,6 +444,7 @@ export interface FetchAndCleanExtractionMetrics {
   documentTitle?: string;
   headingText?: string;
   articleScope?: GamingArticleScope;
+  articleRestrictionsBound?: true;
 }
 
 function normalizeExtractedText(value: string): string {
@@ -819,8 +821,10 @@ export function extractFetchAndCleanDocument(
       try { return Boolean($(element).closest(selector).length); } catch { return false; }
     });
   };
-  const scopedArticle = options.preservePrimaryContentHeading && options.originalArticleScope
-    ? readGamingArticleScope($, headingDenied) : undefined;
+  const articleOwner = options.preservePrimaryContentHeading && (options.originalArticleScope || options.originalArticleHeading)
+    ? readGamingArticleOwner($, headingDenied) : undefined;
+  const scopedArticle = articleOwner && options.originalArticleScope
+    ? readGamingArticleScope($, headingDenied, articleOwner) : undefined;
   for (const selector of removeSelectors) {
     try {
       if (options.preservePrimaryContentHeading && selector === 'header') {
@@ -979,8 +983,10 @@ export function extractFetchAndCleanDocument(
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
   const originalScope = options.originalArticleScope;
-  const articleScope = scopedArticle && originalScope && selectedCandidate.element && cleanedText === selectedText
-    && $(selectedCandidate.element).closest(GAMING_ARTICLE_REGION_SELECTOR).get(0) === scopedArticle.article
+  const selectedArticle = articleOwner && selectedCandidate.element && cleanedText === selectedText
+    && $(selectedCandidate.element).closest(GAMING_ARTICLE_REGION_SELECTOR).get(0) === articleOwner.article;
+  const articleRestrictionsBound = selectedArticle && articleOwner.heading === options.originalArticleHeading;
+  const articleScope = selectedArticle && scopedArticle && originalScope
     && scopedArticle.metadata.label === originalScope.label && scopedArticle.metadata.heading === originalScope.heading
     ? { label: originalScope.label, heading: originalScope.heading,
         ...(originalScope.lead && scopedArticle.metadata.lead === originalScope.lead ? { lead: originalScope.lead } : {}) }
@@ -1000,7 +1006,8 @@ export function extractFetchAndCleanDocument(
     candidateCount: candidates.length,
     ...(documentTitle ? { documentTitle } : {}),
     ...(headingText ? { headingText } : {}),
-    ...(articleScope ? { articleScope } : {})
+    ...(articleScope ? { articleScope } : {}),
+    ...(articleRestrictionsBound ? { articleRestrictionsBound: true } : {})
   });
 
   const seenLinks = new Set<string>();

@@ -7,7 +7,7 @@ import { gamingEditionEvidenceMatchesRequest, normalizeGamingEvidenceGameIdentit
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
+import { extractGamingFreshnessMetadata, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
 import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern } from './gamingPlatformIdentity.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingGameScopedDocument,
   selectGamingSourceEditionScopedEvidence, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
@@ -15,6 +15,7 @@ import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { gamingSourceHasAuthorityRestriction } from './gamingSourceAuthority.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
+export const GAMING_STORED_APPLICABILITY_VERSION = 'gaming-stored-applicability/v2';
 // Six gameplay and three currentness artifacts, each with at most 500 indexed
 // chunks. This inspection bound is separate from the top-20 combination search.
 const MAX_GAMING_EVIDENCE_POOL_CANDIDATES = (GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
@@ -35,6 +36,8 @@ export interface GamingStoredEvidenceLimits {
 export interface GamingStoredEvidenceRecord {
   /** Validated and content-bound by the backend service before projection. */
   clearSourceAssessment?: GamingClearAssessment;
+  /** Set only by the backend after validating the current acquired artifact. */
+  transientSourceEvidence?: true;
   /** Backend catalog identity when available; legacy pure inputs may omit it. */
   gameName?: string;
   recordId: string;
@@ -222,7 +225,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && !Array.isArray(provenance.acquiredApplicability) ? provenance.acquiredApplicability as Record<string, unknown> : undefined;
   const validScopeList = (value: unknown) => value === undefined || Array.isArray(value) && value.length <= 8
     && value.every(item => typeof item === 'string' && item.trim().length > 0 && item.length <= 80);
-  const acquiredApplicability = acquiredMetadata?.extractorVersion === GAMING_FRESHNESS_POLICY_VERSION
+  const acquiredApplicability = acquiredMetadata?.extractorVersion === GAMING_STORED_APPLICABILITY_VERSION
     && Object.keys(acquiredMetadata).every(key => ['extractorVersion', 'contentHash', 'game', 'edition', 'platforms',
       'regions', 'metadataConflict', 'metadataUnverified'].includes(key))
     && typeof record.contentHash === 'string' && /^[a-f0-9]{64}$/u.test(record.contentHash) && acquiredMetadata.contentHash === record.contentHash
@@ -232,8 +235,8 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && [acquiredMetadata.metadataConflict, acquiredMetadata.metadataUnverified].every(value => value === undefined || typeof value === 'boolean')
     && validScopeList(acquiredMetadata.platforms) && validScopeList(acquiredMetadata.regions) ? acquiredMetadata : undefined;
   const existingHybridScope = freshnessMetadata && typeof freshnessMetadata.game === 'string'
-    && (provenance.acquiredApplicability === undefined || acquiredApplicability !== undefined)
-    && acquiredApplicability?.metadataUnverified !== true
+    && (record.transientSourceEvidence === true
+      || acquiredApplicability && acquiredApplicability.metadataUnverified !== true)
     && freshnessMetadata.game.trim().length > 0 && freshnessMetadata.game.length <= 160
     && typeof freshnessMetadata.id === 'string' && freshnessMetadata.id.length > 0 && freshnessMetadata.id.length <= 2_048
     && freshnessMetadata.policyVersion === GAMING_SOURCE_POLICY_VERSION

@@ -571,7 +571,7 @@ export async function evaluateGamingHybridCandidates(
         normalized: { text: chunk.text, ...(chunk.evidenceUnits?.length ? { evidenceUnits: chunk.evidenceUnits } : {}), chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks,
           startChar: chunk.startChar, endChar: chunk.endChar, headingPath: chunk.headingPath } },
         sourceId: candidateId, publicUrl: publicUrl!, sourceType: policy.category, revisionId: contentHash, contentHash,
-        clearSourceAssessment: sourceAssessment,
+        clearSourceAssessment: sourceAssessment, transientSourceEvidence: true as const,
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
           resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
           gameName: input.game, edition: freshness.edition ?? input.edition, gamingClear: sourceAssessment,
@@ -736,7 +736,7 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
       && isGamingHybridRecordTextBound(record, candidate, intactText))
       // Rebuild applicability only from the artifact just verified above. A
       // retained record's metadata cannot replace its acquired source proof.
-      .map(record => ({ ...record, contentHash: candidate.contentHash, clearSourceAssessment: candidate.sourceAssessment,
+      .map(record => ({ ...record, contentHash: candidate.contentHash, clearSourceAssessment: candidate.sourceAssessment, transientSourceEvidence: true as const,
         provenance: { ...record.provenance, approvedContentHash: candidate.contentHash,
           hybridFreshness: { ...candidate.freshness } } }));
   });

@@ -60,10 +60,15 @@ export function validateGamingGameRegistry(value: unknown): GamingGameRegistry {
         if (!Array.isArray(topic.actions) || !topic.actions.length || topic.actions.length > 4) fail();
         for (const action of topic.actions) {
           if (!record(action)) fail();
-          allowedKeys(action, ['verbs', 'objects']);
+          allowedKeys(action, ['verbs', 'objects', 'actors']);
           for (const alternatives of [action.verbs, action.objects]) {
             if (!literals(alternatives, 16) || !alternatives.length) fail();
             const identities = alternatives.map(normalizeGamingRegistryIdentity);
+            if (identities.some(identity => !identity) || new Set(identities).size !== identities.length) fail();
+          }
+          if (action.actors !== undefined) {
+            if (!literals(action.actors, 8) || !action.actors.length) fail();
+            const identities = action.actors.map(normalizeGamingRegistryIdentity);
             if (identities.some(identity => !identity) || new Set(identities).size !== identities.length) fail();
           }
         }

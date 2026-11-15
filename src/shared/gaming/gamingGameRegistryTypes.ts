@@ -14,7 +14,7 @@ export interface GamingRegistryGame {
   guideTopics?: readonly {
     heading: string;
     entities: readonly string[];
-    actions: readonly { verbs: readonly string[]; objects: readonly string[] }[];
+    actions: readonly { verbs: readonly string[]; objects: readonly string[]; actors?: readonly string[] }[];
   }[];
   /** Short ambiguous aliases are case sensitive in prose, but exact requests may resolve them. */
   caseSensitiveAliases?: readonly string[];

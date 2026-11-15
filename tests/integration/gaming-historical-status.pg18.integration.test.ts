@@ -61,6 +61,7 @@ const { persistGamingSourceRevision, searchActiveGamingKnowledge } = await impor
 const service = await import('../../src/services/gamingSourceIngestion.js');
 const { resolveGamingDocument } = await import('../../src/services/gamingDocumentResolution.js');
 const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../../src/shared/gaming/gamingFreshnessCore.js');
+const { GAMING_STORED_APPLICABILITY_VERSION } = await import('../../src/shared/gaming/gamingStoredEvidenceCore.js');
 const { assessGamingClearSource } = await import('../../src/shared/gaming/gamingClearSource.js');
 const { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } = await import('../../src/shared/gaming/gamingClearPolicy.js');
 const { assessGamingRequestCoverage } = await import('../../src/shared/gaming/gamingClearEvidence.js');
@@ -353,7 +354,7 @@ withDatabase('retained Gaming status and current execution on real PostgreSQL 18
         extractorVersion: 'pg18-retained-fixture-v1', normalizerSchemaVersion: '1',
         provenance: { gameName: game, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
           classification: 'verified', generationEligible: true, gamingClear: assessment, approvedContentHash: approvedDocumentHash,
-          acquiredApplicability: { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash, game },
+          acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game },
           resolverId: 'synthetic-retained-corpus', resolverVersion: 'pg18-retained-fixture-v1', resolutionStrategy: 'retained_text' },
         extractionMetrics: { coverageStatus: 'complete', documentCharsIndexed: text.length, chunkCount: 1 },
         records: [{ recordType: 'guide', semanticKey: hash(url), payloadHash: hash(JSON.stringify(normalized)),

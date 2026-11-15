@@ -1,5 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
-import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
 import { evaluateGamingFreshness, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
@@ -29,6 +29,40 @@ const run = (input: typeof staticInput | { game: string; mode: 'guide' | 'build'
   assessGamingClearEvidence(input, data, { now });
 
 describe('Gaming CLEAR bounded evidence decisions', () => {
+  const gtaProgressRequest = { game: 'Grand Theft Auto IV', mode: 'guide' as const,
+    prompt: 'What should I do next?', progressPoint: 'Just arrived by boat.', spoilerMode: 'light' as const };
+
+  test.each([
+    ['an uncertain planned scene', 'The expected scene has Niko climb off the boat in Liberty City with Roman.'],
+    ['a stated plan', 'The plan says Niko climbs off the boat in Liberty City with Roman.'],
+    ['a different actor performing the action', 'Roman waits in Liberty City with Niko and watches a sailor climb off the boat.'],
+    ['an action with no registered actor', 'A sailor climbs off the boat near the docks.'],
+  ])('does not let %s establish the GTA IV checkpoint coverage', (_case, passage) => {
+    expect(assessGamingRequestCoverage(gtaProgressRequest, knowledge(gtaProgressRequest.game, [passage])).coverageSatisfied).toBe(false);
+  });
+
+  test('accepts a registered GTA IV actor action without requiring unrelated topic entities in that sentence', () => {
+    const passage = 'After Niko Bellic climbs off the boat, follow Roman to Hove Beach.';
+    expect(assessGamingRequestCoverage(gtaProgressRequest, knowledge(gtaProgressRequest.game, [passage])))
+      .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+  });
+
+  test('retains valid next-step coverage when the acquired prose reports a boat docking', () => {
+    const passage = 'After the boat docks at the beginning, drive Roman to Hove Beach along the route marked on the map.';
+    expect(assessGamingRequestCoverage(gtaProgressRequest, knowledge(gtaProgressRequest.game, [passage])))
+      .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+  });
+
+  test('does not re-credit a filtered checkpoint claim for a separate multipart requirement', () => {
+    const input = { ...gtaProgressRequest,
+      prompt: 'What should I do next, what are the first two actions to reach the safehouse, and where is the hospital?' };
+    const passage = 'The plan says Niko climbs off the boat in Liberty City with Roman, then follows him to the hospital.';
+    const coverage = assessGamingRequestCoverage(input, knowledge(input.game, [passage]));
+    expect(coverage.coverageSatisfied).toBe(false);
+    expect(coverage.requirementSupport.length).toBeGreaterThan(1);
+    expect(coverage.requirementSupport.every(requirement => requirement.evidenceIds.length === 0)).toBe(true);
+  });
+
   test('complementary passages cover the request without requiring multiple sources', () => {
     const input = { ...staticInput, prompt: 'Where are the copper key and silver lever?' };
     const data = knowledge(input.game, ['The copper key is inside the hollow pedestal by the gate.', 'The silver lever is beside the upper balcony entrance.']);

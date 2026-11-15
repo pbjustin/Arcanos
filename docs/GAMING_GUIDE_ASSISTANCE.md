@@ -114,6 +114,9 @@ retain their ambiguity. Exact base-game wording and closed `no`, `without` or
 request conflicts. Bounded named negatives such as “do not use Shadow of the
 Erdtree” remain unresolved instead of selecting affirmative expansion scope;
 double negatives and mixed positive/negative requests also remain unresolved.
+A request for content outside the base game leaves the expansion choice open
+unless the player names one. Once named, the expansion still requires compatible
+acquired evidence.
 The closed generic question pattern “Is DLC required/needed/
 necessary to obtain …?” allows ordinary base-game evidence unless other positive
 expansion scope remains. Acquired evidence must prove the availability fact;
@@ -1192,7 +1195,10 @@ ingestion binds applicability only after independently acquired game and edition
 identity is verified; matching request, URL or page title metadata does not
 provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
-until reassessed. These checks do not automatically write or migrate stored data.
+until reassessed. Applicability snapshots from an older scan remain readable by
+the owner. They cannot establish compatibility for generation until a current
+scan reassesses the whole source. These checks do not automatically write or
+migrate stored data.
 
 Live extraction caches also respect durable source history. If any revision is
 known for the exact source and applicable game identity, retrieval reacquires its

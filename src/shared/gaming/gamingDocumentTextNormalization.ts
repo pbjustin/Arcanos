@@ -132,11 +132,20 @@ function readArticleLead($: ReturnType<typeof load>, article: cheerio.Element, h
   return opening(siblings.slice(siblings.indexOf(header) + 1), 0) ?? undefined;
 }
 
-/** Read the visible label attached to an intact heading in one directly owned article header. */
-export function readGamingArticleScope($: ReturnType<typeof load>, denied: (element: cheerio.Element) => boolean):
-  { article: cheerio.Element; metadata: GamingArticleScope } | undefined {
-  const isExcluded = (element: cheerio.Element) => denied(element)
-    || $(element).closest(ARTICLE_METADATA_HIDDEN).length > 0;
+export interface GamingArticleOwner {
+  article: cheerio.Element;
+  heading: string;
+}
+
+function gamingArticleNodeExcluded($: ReturnType<typeof load>, element: cheerio.Element,
+  denied: (element: cheerio.Element) => boolean): boolean {
+  return denied(element) || $(element).closest(ARTICLE_METADATA_HIDDEN).length > 0;
+}
+
+/** Bind negative source-wide facts to one intact article independently of positive game identity. */
+export function readGamingArticleOwner($: ReturnType<typeof load>, denied: (element: cheerio.Element) => boolean):
+  GamingArticleOwner | undefined {
+  const isExcluded = (element: cheerio.Element) => gamingArticleNodeExcluded($, element, denied);
   const candidates = $(GAMING_ARTICLE_REGION_SELECTOR);
   if (candidates.length > 48) return undefined;
   const regions = candidates.toArray().filter(element => !isExcluded(element));
@@ -144,11 +153,22 @@ export function readGamingArticleScope($: ReturnType<typeof load>, denied: (elem
   if (articles.length !== 1) return undefined;
   const [article] = articles;
   const enclosing = new Set($(article).parents().toArray());
-  if (regions.some(region => region !== article && !enclosing.has(region))) return undefined;
+  if (regions.some(region => region !== article && !enclosing.has(region)) || !articleElementClosed(article)) return undefined;
+  const headings = $(article).find('h1');
+  const heading = headings.get(0);
+  if (headings.length !== 1 || !heading || !articleElementClosed(heading) || isExcluded(heading)) return undefined;
+  const value = headings.text().replace(/\s+/gu, ' ').trim();
+  return value && value.length <= 160 ? { article, heading: value } : undefined;
+}
 
+/** Read the visible label attached to an intact heading in one directly owned article header. */
+export function readGamingArticleScope($: ReturnType<typeof load>, denied: (element: cheerio.Element) => boolean,
+  owner: GamingArticleOwner): { article: cheerio.Element; metadata: GamingArticleScope } | undefined {
+  const { article } = owner;
+  const isExcluded = (element: cheerio.Element) => gamingArticleNodeExcluded($, element, denied);
   const headers = $(article).children('header');
   const headings = headers.children('h1');
-  if (headers.length !== 1 || headings.length !== 1 || $(article).find('h1').length !== 1) return undefined;
+  if (headers.length !== 1 || headings.length !== 1) return undefined;
   const heading = headings.get(0)!;
   const label = headings.prev('div,p,span').get(0);
   const header = headers.get(0)!;

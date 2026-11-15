@@ -15,11 +15,20 @@ const { resolveGamingDocument } = await import('../src/services/gamingDocumentRe
 
 const url = 'https://guides.example.org/independent-colonisation-guide';
 const input = { game: 'Elite Dangerous', mode: 'guide' as const, prompt: 'Explain system colonisation planning and supply delivery.' };
+const gtaArticleUrl = 'https://guides.example.org/gta-iv-cousins-bellic';
 // Independently authored structural fixtures, not publisher text or gameplay truth claims.
 const guidance = 'In Elite Dangerous, commanders plan a system colonisation project before delivering construction supplies. Compare the requested supply quantities with cargo capacity, then make delivery trips until the construction manifest is complete.';
 const assess = (title: string, prose: string, game = input.game, edition?: string) => assessGamingClearSourceIdentity({
   publicUrl: url, metadata: { title, headings: title }, text: `${title}\n${prose}`
 }, { ...input, game, edition }, assessGamingSourcePolicy(url, game));
+const assessGtaArticleLead = (lead: string, articleScopeAssertions?: string[], retainedText = '') => assessGamingClearSourceIdentity({
+  publicUrl: gtaArticleUrl,
+  metadata: { title: 'GTA IV - The Cousins Bellic - Story Mission Guide', headings: 'The Cousins Bellic',
+    articleScope: { label: 'GTA IV - Story Mission Guide', heading: 'The Cousins Bellic', lead },
+    ...(articleScopeAssertions ? { articleScopeAssertions } : {}) },
+  text: ['The Cousins Bellic', lead, retainedText].filter(Boolean).join('\n')
+}, { game: 'Grand Theft Auto IV', mode: 'guide', prompt: 'What happens in the opening mission?' },
+assessGamingSourcePolicy(gtaArticleUrl, 'Grand Theft Auto IV'), true);
 
 describe('independently acquired game and mechanic ownership', () => {
   it('accepts ordinary game-qualified mechanic metadata with independent game prose', () => {
@@ -129,6 +138,67 @@ describe('independently acquired game and mechanic ownership', () => {
 
   it('accepts a generic mechanic heading with independently named game ownership', () => {
     expect(assess('System Colonisation guide', `In the game Elite Dangerous, commanders plan a system colonisation project. ${guidance}`))
+      .toMatchObject({ status: 'verified' });
+  });
+
+  it.each([
+    ['Xenoblade Chronicles 2 Blade Combos guide', 'Blade Combos is a mechanic in Xenoblade Chronicles 2. Rex can execute a Blade Combo by chaining elemental Blade Specials.', 'Xenoblade Chronicles 2'],
+    ['Elite Dangerous Supercruise Assist guide', 'Supercruise Assist is a mechanic in Elite Dangerous. A pilot selects the destination and enables the Supercruise Assist module on the navigation panel.', 'Elite Dangerous'],
+    ['GTA IV Jamaican Heat mission guide', 'Jamaican Heat is a mission in Grand Theft Auto IV. Niko picks up Little Jacob and covers him during the meeting.', 'Grand Theft Auto IV'],
+  ])('preserves exact acquired ownership for the independently authored topic %s', (title, prose, game) => {
+    expect(assess(title, prose, game)).toMatchObject({ status: 'verified' });
+  });
+
+  it.each([
+    ['Xenoblade Chronicles 2 Blade Combos guide', 'Blade Combos is a mechanic in Elite Dangerous. Rex can execute a Blade Combo by chaining elemental Blade Specials.', 'Xenoblade Chronicles 2', 'conflict'],
+    ['Elite Dangerous Supercruise Assist guide', 'Supercruise Assist is a mechanic in Copper Vale. A pilot selects the destination and enables the module.', 'Elite Dangerous', 'unknown'],
+    ['GTA IV Jamaican Heat mission guide', 'Jamaican Heat is a mission in Grand Theft Auto V. Niko picks up Little Jacob and covers him during the meeting.', 'Grand Theft Auto IV', 'conflict'],
+  ])('keeps conflicting acquired topic ownership fail-closed for %s', (title, prose, game, status) => {
+    expect(assess(title, prose, game)).toMatchObject({ status });
+  });
+
+  it('accepts an affirmative registered actor within an acquired subject group', () => {
+    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.'))
+      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
+  it('accepts the full registered Niko Bellic name as the action actor', () => {
+    expect(assessGtaArticleLead('Niko Bellic and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.'))
+      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
+  it.each([
+    ['an uncertain planned scene', 'The expected scene has Niko climb off the boat in Liberty City with Roman.'],
+    ['a planned event', 'The plan says Niko climbs off the boat in Liberty City with Roman.'],
+    ['a prospective event', 'Niko is expected to climb off the boat in Liberty City with Roman.'],
+    ['a different actor', 'Niko and Roman wait in Liberty City while a sailor climbs off the boat.'],
+    ['a coordinated different actor', 'Roman waits in Liberty City with Niko and watches a sailor climb off the boat.'],
+  ])('does not corroborate a registered guide topic from %s', (_reason, lead) => {
+    expect(assessGtaArticleLead(lead)).toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it('treats omitted whole-article contradictory game scope as negative-only evidence', () => {
+    expect(assessGtaArticleLead(
+      'Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
+      ['In Grand Theft Auto V, this guide covers a related mission.']))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('does not use an omitted article assertion as positive gameplay identity proof', () => {
+    expect(assessGtaArticleLead('The opening mission is discussed in this overview.',
+      ['In Grand Theft Auto IV, this guide covers The Cousins Bellic.']))
+      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+  });
+
+  it('keeps an omitted author-authored contradiction even when the selected prose quotes the same words', () => {
+    const assertion = 'In Grand Theft Auto V, this guide covers a related mission.';
+    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
+      [assertion], `\"${assertion}\"`)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('does not classify an arbitrary article topic clause as a foreign game', () => {
+    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
+      ['This guide covers Kokiri Forest sells the Deku Shield for 40 Rupees.']))
       .toMatchObject({ status: 'verified' });
   });
 

@@ -1,7 +1,7 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
 import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, gamingRequestTargetsExtraContent, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
   gamingApplicabilityAssertionText, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
@@ -486,11 +486,13 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   if (historical && (!input.requestedVersion || /\bas\s+of\s+\d{4}-\d{2}-\d{2}\b/iu.test(input.question)))
     return result('unverified', ['HISTORICAL_AS_OF_UNSUPPORTED']);
   const reasons = new Set<string>();
+  const extraContentRequested = gamingRequestTargetsExtraContent(input);
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
     if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
-    if (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
+    if (!input.edition && (item.edition || extraContentRequested)
+      && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
     if (input.platform && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform)) { reasons.add('PLATFORM_MISMATCH'); return false; }
     if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms)) { reasons.add('PLATFORM_REQUIRED'); return false; }
     if (input.region && item.regions?.length && !item.regions.some(region => same(region, input.region) || same(region, 'all'))) { reasons.add('REGION_MISMATCH'); return false; }

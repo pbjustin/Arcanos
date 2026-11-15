@@ -1,6 +1,6 @@
 /** Closed publisher aliases already supported by currentness scope intersection. */
 const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
-  steam: 'pc', 'playstation 4': 'ps4', 'playstation 5': 'ps5'
+  steam: 'pc', 'playstation 3': 'ps3', 'playstation 4': 'ps4', 'playstation 5': 'ps5'
 };
 
 /** Unknown labels stay opaque; console generations and platform families stay distinct. */

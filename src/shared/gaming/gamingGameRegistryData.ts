@@ -10,7 +10,7 @@ const game = (id: string, name: string, aliases: string[] = []): GamingRegistryG
 
 /** Recognition data only. Publisher authority, acquired evidence and storage permissions live elsewhere. */
 export const GAMING_GAME_REGISTRY_DATA: GamingGameRegistry = {
-  version: 'gaming-game-registry/v1', revision: '2026-11-15.2',
+  version: 'gaming-game-registry/v1', revision: '2026-11-15.3',
   topicVocabulary: ['samurai', 'katana', 'katanas', 'blade', 'blades', 'bleed', 'blood', 'dexterity',
     'strength', 'intelligence', 'faith', 'arcane', 'vigor', 'endurance', 'weapon', 'weapons',
     'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents', 'heavy', 'gunner', 'power', 'armor', 'armour'],
@@ -51,11 +51,11 @@ export const GAMING_GAME_REGISTRY_DATA: GamingGameRegistry = {
       guideTopics: [{ heading: 'The Cousins Bellic', entities: ['Niko', 'Roman', 'Liberty City'], actions: [
         { verbs: ['climb off', 'climbs off', 'climbed off', 'step off', 'steps off', 'stepped off', 'get off', 'gets off', 'got off',
           'walk off', 'disembark', 'disembarks', 'disembarked', 'disembark from', 'disembarks from', 'disembarked from'],
-          objects: ['boat', 'ship', 'ferry'] },
+          objects: ['boat', 'ship', 'ferry'], actors: ['Niko', 'Niko Bellic'] },
         { verbs: ['arrive', 'arrives', 'arrived', 'arriving', 'arrive in Liberty City', 'arrives in Liberty City', 'arrived in Liberty City',
           'arrive at the docks', 'arrives at the docks', 'arrived at the docks'],
           objects: ['by boat', 'by ship', 'by ferry', 'by a boat', 'on a boat', 'on the boat', 'on a ship', 'on the ship',
-            'on a ferry', 'on the ferry', 'aboard a boat', 'aboard the boat', 'aboard a ship', 'aboard the ship'] }
+            'on a ferry', 'on the ferry', 'aboard a boat', 'aboard the boat', 'aboard a ship', 'aboard the ship'], actors: ['Niko', 'Niko Bellic'] }
       ] }],
       provenance: { reviewedAt: '2026-11-15', references: ['https://www.rockstargames.com/games/IV',
         'https://www.gta4.tv/gta4/guides/the-cousins-bellic'] } },

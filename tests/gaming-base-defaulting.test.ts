@@ -118,6 +118,45 @@ describe('ordinary base-game request interpretation', () => {
       'Elden Ring Shadow of the Erdtree Samurai katana guide', request);
     expect(dlc.accepted).toHaveLength(1);
   });
+  it('admits acquired expansion evidence for a named request outside the base game', async () => {
+    const request = { ...input, prompt: 'How do Samurai katana attacks work in Shadow of the Erdtree outside the base game?' };
+    const source = `${prose} In Shadow of the Erdtree, Samurai katana attacks require expansion access.`;
+    const title = 'Elden Ring Shadow of the Erdtree Samurai katana guide';
+    expect(resolveGamingRequestEdition(request)).toBe('shadow of the erdtree');
+    const expansion = await acquire('Edition: Shadow of the Erdtree.', source, title, request);
+    expect(expansion.accepted.map(candidate => candidate.freshness.edition)).toEqual(['Shadow of the Erdtree']);
+    expect((await acquire('Edition: Base game.', prose, undefined, request)).accepted).toEqual([]);
+    expect((await acquire('Edition: Shadow of the Erdtree.', source, title,
+      { ...input, prompt: 'How do Samurai katana attacks work in the base game only?' })).accepted).toEqual([]);
+  });
+  it.each(['Elden Ring', 'Unregistered Test Game'])('keeps unnamed extra content outside the base game unresolved for %s', game => {
+    expect(resolveGamingRequestEdition({ game, prompt: 'What katana attacks are available outside the base game?' })).toBeUndefined();
+    expect(resolveGamingRequestEdition({ game, prompt: 'What katana attacks are in the base game only?' })).toBe('base-game');
+  });
+  it.each(["'outside the base game'", '‘outside the base game’'])('does not turn an attributed phrase %s into extra-content intent', phrase => {
+    expect(resolveGamingRequestEdition({ ...input, prompt: `How do Samurai katana attacks work? My friend calls this ${phrase}.` }))
+      .toBe('base-game');
+  });
+  it('does not substitute a base-game guide for a request outside the base game', async () => {
+    const request = { ...input, prompt: 'What Samurai katana attacks are available outside the base game?' };
+    expect((await acquire('Edition: Base game.', prose, undefined, request)).accepted).toEqual([]);
+    expect((await acquire('', prose, undefined, request)).accepted).toEqual([]);
+  });
+  it('does not let an acquired guide choose the expansion for an unnamed extra-content request', async () => {
+    const request = { ...input, prompt: 'What Samurai katana attacks are available outside the base game?' };
+    const result = await acquire('Edition: Shadow of the Erdtree.',
+      `${prose} In Shadow of the Erdtree, Samurai katana attacks require expansion access.`,
+      'Elden Ring Shadow of the Erdtree Samurai katana guide', request);
+    expect(result.accepted).toHaveLength(0);
+    expect((await acquire('Edition: Shadow of the Erdtree. Edition: Base game.', prose, undefined, request)).accepted).toHaveLength(0);
+    expect((await acquire('Edition: Collector Expansion.', prose, undefined, request)).accepted).toHaveLength(0);
+    expect((await acquire('Edition: Shadow of the Erdtree.', prose, undefined,
+      { ...request, prompt: 'What Samurai katana attacks are available outside the base game, excluding Shadow of the Erdtree?' }))
+      .accepted).toHaveLength(0);
+    expect((await acquire('Edition: Shadow of the Erdtree.', prose, undefined,
+      { ...request, prompt: 'What Samurai katana attacks are available outside the base game of Elden Ring Nightreign?' }))
+      .accepted).toHaveLength(0);
+  });
   it('does not let an attributed expansion title select the player edition during acquisition', async () => {
     const request = { ...input,
       prompt: 'The submitted guide is titled "Elden Ring Shadow of the Erdtree". How do Samurai katana attacks work?' };

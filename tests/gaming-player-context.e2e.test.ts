@@ -105,7 +105,8 @@ const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 const { default: errorHandler } = await import('../src/transport/http/middleware/errorHandler.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const { hashGamingDocumentRevision } = await import('../src/services/gamingDurableDocumentChunks.js');
-const { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { GAMING_STORED_APPLICABILITY_VERSION } = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
 const { GAMING_CLEAR_POLICY_VERSION } = await import('../src/shared/gaming/gamingClearPolicy.js');
 const logInfo = jest.fn();
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/gaming-guide-assistance.json', import.meta.url), 'utf8')) as {
@@ -162,7 +163,7 @@ function record(fixture: typeof corpus.cases[number], text = fixture.evidence, i
     extractor: 'synthetic', extractorVersion: 'fixture-v1', normalizerSchemaVersion: 'gaming-document-chunks-v1',
     provenance: { sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
       ...(fixture.request.version ? { patchVerificationMethod: 'extractor', verifiedPatchVersion: fixture.request.version } : {}),
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game: applicability.game,
         ...(applicability.edition ? { edition: applicability.edition } : {}),
         ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
         ...(applicability.regions?.length ? { regions: applicability.regions } : {}),

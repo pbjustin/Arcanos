@@ -898,6 +898,17 @@ describe('GTA IV opening mission controls', () => {
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
   });
 
+  it('withholds next steps when the only acquired walkthrough documents the drive but omits the boat checkpoint', async () => {
+    scenario = { ...opening, progressPoint: 'Just arrived by boat.', pages: [{ ...opening.pages[0],
+      body: '<h2>The Cousins Bellic</h2><p>In the game Grand Theft Auto IV, Roman asks Niko to drive him to Hove Beach. '
+        + 'Follow the yellow GPS route to Roman’s apartment, then park in the destination marker.</p>' }] };
+    const result = await submit();
+    expect(documents.at(-1)?.text).toMatch(/follow the yellow GPS route/iu);
+    expect(result.result).toMatchObject({ reason: 'QUESTION_COVERAGE_INSUFFICIENT', coverageSatisfied: false });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
   it('denies storing the scoped opening without changing its transient source assessment', async () => {
     scenario = storyScenario('Just arrived by boat.');
     const result = await submit();
@@ -990,6 +1001,76 @@ describe('GTA IV opening mission controls', () => {
     expect(evaluations[0].decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
     expect(result.result.answer).toBeUndefined();
     expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a named conflicting game', '<p>In the game Grand Theft Auto V, drive Franklin to the Vinewood sign.</p>', 'GAME_MISMATCH'],
+    ['a platform restriction', '<p>This walkthrough applies only to Xbox 360.</p>', 'PLATFORM_MISMATCH'],
+  ])('still checks %s in a sibling omitted when the article body is selected', async (_case, restriction, reason) => {
+    const body = storyArticle.body.replace('<p>' + storyLead + '</p>', '<div id="article-body"><p>' + storyLead + '</p></div>');
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: body + '<div>' + restriction + '</div>' });
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.extraction.selectedContainer).toBe('#article-body');
+    expect(documents.at(-1)?.text).not.toMatch(/Franklin|This walkthrough applies only/iu);
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [reason] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['paragraph under a heading', '<h2>Platform notes</h2><p>This walkthrough applies only to Xbox 360.</p>'],
+    ['bare prose under a heading', '<div><h2>Platform notes</h2>This walkthrough applies only to Xbox 360.</div>'],
+    ['heading without punctuation', '<h2>This walkthrough applies only to Xbox 360</h2><p>Later details follow.</p>'],
+    ['article-owned aside', '<aside><p>This walkthrough applies only to Xbox 360.</p></aside>']
+  ])('rejects a source-wide platform mismatch in an article %s beyond the opening passage', async (_case, restriction) => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: storyArticle.body + restriction });
+    const result = await submit({ platform: 'PC' });
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('accepts matching platform scope and keeps the article qualification out of gameplay evidence', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: storyArticle.body + '<aside><p>This walkthrough applies only to Xbox 360.</p></aside>' });
+    const result = await submit({ platform: 'Xbox 360' });
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
+    expect(finalEvidence.every(chunk => !/applies only to Xbox 360|Platform: Xbox 360/iu.test(chunk.text))).toBe(true);
+  });
+
+  it('does not borrow scope from navigation, quoted asides, or external link text', async () => {
+    const other = '<p>This walkthrough applies only to Xbox 360.</p>';
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: storyArticle.body + '<nav>' + other + '</nav><aside><blockquote>' + other + '</blockquote></aside>'
+        + '<aside><p><a href="https://related-guides.example/other">This walkthrough applies only to Xbox 360.</a></p></aside>' });
+    const result = await submit({ platform: 'PC' });
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
+  });
+
+  it.each([
+    ['statement following an unpunctuated heading', '<div id="article-body">', '</div><h2>Platform notes</h2><p>This walkthrough applies only to Xbox 360.</p>'],
+    ['label before the preferred body', '<p>Platform: Xbox 360</p><div id="article-body">', '</div>']
+  ])('preserves a %s for an independently identified ordinary article', async (_case, prefix, suffix) => {
+    scenario = { ...opening, pages: [{ ...page, body: prefix + page.body + suffix }] };
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.extraction.selectedContainer).toBe('#article-body');
+    expect(documents.at(-1)?.metadata.articleScope).toBeUndefined();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('does not treat long gameplay prose and ordinary links as incomplete scope declarations', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: storyArticle.body
+      + '<p>In phase two, <a href="/story">the next route</a> continues through the borough. '
+      + 'The opening route follows the marked road and avoids unnecessary detours. '.repeat(12)
+      + '</p><aside><p><q>This walkthrough applies only to Xbox 360.</q></p></aside>' });
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.metadata).not.toHaveProperty('applicabilityUnverified');
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
   });
 
   it('withholds truncated instructions and a 403 response even with a matching URL', async () => {

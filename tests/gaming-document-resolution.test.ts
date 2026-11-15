@@ -21,6 +21,9 @@ const { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDoc
   GAMING_DOCUMENT_ACQUISITION_LIMITS } = await import('../src/services/gamingDocumentResolution.js');
 const { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } = await import('../src/services/gamingSourceDiscovery.js');
 const { GAMING_BUILD_RESOURCE_HARD_LIMITS } = await import('../src/services/gamingBuildResources.js');
+const { GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
+const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 
 function response(data: string, contentType: string) {
   return { data, headers: { 'content-type': contentType } };
@@ -178,7 +181,81 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.metadata.articleScope).toEqual({ label: openingLabel, heading: openingHeading });
   });
 
-  it('withholds article metadata for truncation and source-wide use restrictions', async () => {
+  it('does not bind an article’s restrictions to a selected unrelated content container', async () => {
+    const unrelated = '<div id="article-body"><h2>Camera guide</h2><p>'
+      + 'Use the left stick to turn the camera before walking to the next checkpoint. '.repeat(12) + '</p></div>';
+    const html = '<article>' + openingHeader + '<p>' + openingLead + '</p>'
+      + '<aside><p>This walkthrough applies only to Xbox 360.</p></aside></article>' + unrelated;
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.extraction.selectedContainer).toBe('#article-body');
+    expect(document.text).toContain('Camera guide');
+    expect(document.evidenceUnits?.some(unit => unit.fields.some(field => /Platforms?/iu.test(field.label)))).not.toBe(true);
+    expect(document.metadata.articleScopeAssertions).toBeUndefined();
+  });
+
+  it('keeps an omitted declaration when its only copy in the selected body is a quotation', async () => {
+    const assertion = 'In the game Grand Theft Auto V, drive Franklin to the Vinewood sign.';
+    const html = '<article>' + openingHeader + '<div id="article-body"><p>' + openingLead + '</p>'
+      + '<p>An unrelated guide was quoted: "' + assertion + '"</p></div><aside><p>' + assertion + '</p></aside></article>';
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.extraction.selectedContainer).toBe('#article-body');
+    expect(document.text).toContain('"' + assertion + '"');
+    expect(document.metadata.articleScopeAssertions).toEqual([assertion]);
+    const game = 'Grand Theft Auto IV';
+    const identity = assessGamingClearSourceIdentity(document, { game, mode: 'guide', prompt: 'What should I do next?' },
+      assessGamingSourcePolicy(document.publicUrl, game), true);
+    expect(identity).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('keeps acquired article scope when only the diagnostic raw preview is clipped', async () => {
+    const html = '<article>' + openingHeader + openingBody + '</article>';
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl, 100_000, { rawDocumentMaxChars: 40 });
+    expect(document.rawDocument).toMatchObject({ truncated: true });
+    expect(document.metrics.truncated).toBe(false);
+    expect(document.metadata.articleScope).toEqual({ label: openingLabel, heading: openingHeading, lead: openingLead });
+    expect(isResolvedGamingDocumentIdentityVerified(document, openingUrl)).toBe(true);
+
+    const selectedTextClipped = await resolveGamingDocument(openingUrl, 80, { rawDocumentMaxChars: 40 });
+    expect(selectedTextClipped.rawDocument?.truncated).toBe(true);
+    expect(selectedTextClipped.metrics.truncated).toBe(true);
+    expect(selectedTextClipped.metadata.articleScope).toBeUndefined();
+
+    mockAxiosGet.mockResolvedValue(response(html + '<footer>Do not redistribute this content.</footer>', 'text/html'));
+    const restricted = await resolveGamingDocument(openingUrl, 100_000, { rawDocumentMaxChars: 40 });
+    expect(restricted.rawDocument?.truncated).toBe(true);
+    expect(restricted.sourceUseRestricted).toBe(true);
+    expect(restricted.metadata.articleScope).toBeUndefined();
+  });
+
+  it('does not attest article scope after a protected HTML transfer is interrupted', async () => {
+    async function* interruptedArticle() {
+      yield Buffer.from('<article>' + openingHeader + openingBody);
+      throw Object.assign(new Error('Synthetic interrupted transfer'), { code: 'ECONNRESET' });
+    }
+    const data = Object.assign(Readable.from(interruptedArticle()), { rawHeaders: ['content-type', 'text/html'] });
+    mockAxiosGet.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data });
+    const onExtraction = jest.fn();
+    await expect(resolveGamingDocument(openingUrl, 100_000, { onExtraction })).rejects
+      .toMatchObject({ code: 'SOURCE_FETCH_FAILED', acquisition: { stage: 'transport', subreason: 'CONNECTION_FAILED' } });
+    expect(onExtraction).not.toHaveBeenCalled();
+  });
+
+  it('does not attest article scope after the structural HTML extraction budget is exhausted', async () => {
+    const html = '<article>' + openingHeader + openingBody + '</article>'
+      + '<i></i>'.repeat(GAMING_HTML_EVIDENCE_LIMITS.elements + 1);
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.rawDocument?.truncated).toBe(false);
+    expect(document.metrics.truncated).toBe(true);
+    expect(document.structureDiagnostics).toMatchObject({ budgetOutcome: 'exhausted',
+      truncationStages: expect.arrayContaining(['extraction']) });
+    expect(document.metadata.articleScope).toBeUndefined();
+  });
+
+  it('withholds article metadata for selected prose truncation and source-wide use restrictions', async () => {
     const html = '<article>' + openingHeader + openingBody + '</article>';
     mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
     const truncated = await resolveGamingDocument(openingUrl, 80);

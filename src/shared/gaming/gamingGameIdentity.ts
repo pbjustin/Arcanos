@@ -40,10 +40,18 @@ function gamingRequestScopeText(question: string): string {
   return question.replace(/(?:^|[.!?]\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu, ' ');
 }
 
+function withoutOutsideBaseGameClause(question: string): string {
+  return question.replace(/"[^"]*"|“[^”]*”|`[^`]*`|‘[^’]*’|(?<![\p{L}\p{N}])'[^']*'(?![\p{L}\p{N}])|\boutside\s+(?:of\s+)?(?:the\s+)?base[\s-]+game\b/giu,
+    (clause: string, offset: number) => !/^outside\b/iu.test(clause)
+      || /\b(?:not|never|isn['’]t|aren['’]t)(?:\s+available)?\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
+}
+
 /** Request interpretation only; never an assertion about acquired source metadata. */
 export function resolveGamingRequestEdition(input: { game?: string; edition?: string; prompt?: string; question?: string }): string | undefined {
   if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
-  const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
+  const scopeText = gamingRequestScopeText(input.prompt ?? input.question ?? '');
+  const question = withoutOutsideBaseGameClause(scopeText);
+  const outsideBaseGame = question !== scopeText;
   const entry = resolveGamingRegistryGame(input.game ?? '');
   if (!entry) {
     // A missing catalog entry supplies no edition default. Explicit generic
@@ -52,7 +60,7 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
     const remaining = question.replace(/\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?)\b/giu,
       (clause: string, offset: number) => /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
     const without = remaining !== question;
-    return (base || without) && !/\b(?:dlcs?|expansions?)\b/iu.test(remaining) ? 'base-game' : undefined;
+    return !outsideBaseGame && (base || without) && !/\b(?:dlcs?|expansions?)\b/iu.test(remaining) ? 'base-game' : undefined;
   }
   const independentEditions = entry.editions.filter(edition => edition.kind === 'edition');
   if (independentEditions.length) {
@@ -94,7 +102,7 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   const requested = entry.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind)
     && [edition.name, ...edition.aliases].some(alias => new RegExp(`\\b${gamingRegistryLiteralPattern(alias)}\\b`, 'iu').test(remaining)));
   if (requested.length === 1) return requested[0].name;
-  if (expansionRequested) return undefined;
+  if (expansionRequested || outsideBaseGame) return undefined;
   // An explicit base-only request is meaningful even when this registered
   // game has no catalog default. Unspecified requests still receive no scope.
   return defaultEdition ?? (baseRequested || negativeRequested ? 'base-game' : undefined);
@@ -110,6 +118,13 @@ export interface GamingEditionRequestContext {
   version?: string;
 }
 
+/** A request for extra content is distinct from choosing a specific expansion. */
+export function gamingRequestTargetsExtraContent(input: GamingEditionRequestContext): boolean {
+  if (input.edition) return false;
+  const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
+  return withoutOutsideBaseGameClause(question) !== question;
+}
+
 /** Eligibility only: acquired identity, intact scope and source restrictions still need independent inspection. */
 export function canQualifyGamingUnrequestedEdition(input: GamingEditionRequestContext): boolean {
   const prompt = input.prompt ?? input.question ?? '';
@@ -117,13 +132,15 @@ export function canQualifyGamingUnrequestedEdition(input: GamingEditionRequestCo
   const namedEdition = resolveGamingRegistryGame(input.game ?? '')?.editions.some(edition => edition.kind !== 'base'
     && [edition.name, ...edition.aliases].some(alias => new RegExp(`\\b${gamingRegistryLiteralPattern(alias)}\\b`, 'iu').test(scopePrompt)));
   return !resolveGamingRequestEdition(input) && Boolean(input.game)
-    && !namedEdition && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive)\b/iu.test(scopePrompt)
+    && !gamingRequestTargetsExtraContent(input) && !namedEdition
+    && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive)\b/iu.test(scopePrompt)
     && resolveGamingFreshnessDisposition({ prompt, mode: input.mode, requestedVersion: input.requestedVersion ?? input.version }) !== 'REQUIRED';
 }
 
 /** Unknown ordinary base-game metadata is not an explicit edition contradiction. */
 export function gamingEditionEvidenceMatchesRequest(sourceEdition: string | undefined, requestEdition: string | undefined,
   context?: GamingEditionRequestContext): boolean {
+  if (!requestEdition && context && gamingRequestTargetsExtraContent(context)) return false;
   if (resolveGamingRegistryGame(context?.game ?? '')?.editions.some(edition => edition.kind === 'edition')) {
     const acquired = normalizeGamingRegistryEdition(context?.game ?? '', sourceEdition);
     if (acquired) return requestEdition ? acquired === normalizeGamingRegistryEdition(context?.game ?? '', requestEdition)

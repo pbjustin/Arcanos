@@ -1,4 +1,4 @@
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, gamingRequestTargetsExtraContent } from './gamingGameIdentity.js';
 import { detectGamingRegistryAlias, gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
   normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame, gamingApplicabilityAssertionContext,
   gamingRegistryLiteralPattern, type GamingRegistryGame } from './gamingGameRegistry.js';
@@ -208,7 +208,8 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 }
 
 /** Corroborate the article subject with an acquired gameplay relationship, including its action and object. */
-function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegistryGame['guideTopics']>[number], game: string): boolean {
+function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegistryGame['guideTopics']>[number], game: string,
+  candidateOnly = false, requireEntities = true): boolean {
   const prose = acquiredBodySubjects(lead);
   if (!prose.complete || /["“”`]|(?<![\p{L}\p{N}])['‘’]/u.test(prose.unquotedText)) return false;
   const literals = (values: readonly string[]) =>
@@ -218,13 +219,41 @@ function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegist
   const objectModifiers = String.raw`(?:\s+(?!(?:at|in|on|from|to|near|by|of|off|with|into|onto|beside|around|under|over|through|for|and|or|but|then|where|while|when|after|before|without)\b)[\p{L}\p{N}][\p{L}\p{N}'\u2019-]{0,31}){0,5}\s+`;
   const actions = topic.actions.map(action => new RegExp(
     `${literals(action.verbs)}${objectModifiers}${literals(action.objects)}`, 'iu'));
+  const subjectGroupTail = '(?:\\s+(?:and|with)\\s+(?:(?:his|her|their)\\s+)?(?:(?:fellow|other|the|a|an)\\s+)?[\\p{L}][\\p{L}\\u2019\\x27-]*){0,4}';
+  const actors = topic.actions.map(action => action.actors?.map(actor =>
+    new RegExp(literals([actor]) + subjectGroupTail + '\\s*$', 'iu')));
+  if (candidateOnly) {
+    const claims = gamingAttributableClaimText(lead, game).split('\n');
+    return claims.some(claim => actions.some(action => action.test(claim)));
+  }
   for (const [, sentence] of prose.unquotedText.matchAll(/(?:^|(?<=[.!?])\s+)([^.!?\r\n]{1,400})\.(?=\s|$)/gu)) {
-    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|may|might|maybe|perhaps|possibly|probably|not|no|never|instead|versus|poster|captions?|screenshots?|glossary|index|examples?|hypothetical|references?|mentions?)\b|n['\u2019]t\b/iu.test(sentence))
+    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|may|might|maybe|perhaps|possibly|probably|likely|plan|plans|planned|planning|proposed|expected|expect|intended|supposed|scheduled|speculative|uncertain|unconfirmed|reported|reportedly|alleged|allegedly|not|no|never|instead|versus|poster|captions?|screenshots?|glossary|index|examples?|hypothetical|references?|mentions?)\b|n['\u2019]t\b/iu.test(sentence))
       continue;
     const claims = gamingAttributableClaimText(sentence, game).split('\n');
-    if (claims.some(claim => actions.some(action => action.test(claim)) && entities.every(entity => entity.test(claim)))) return true;
+    if (claims.some(claim => (!requireEntities || entities.every(entity => entity.test(claim))) && actions.some((action, index) => {
+      const match = action.exec(claim);
+      if (!match) return false;
+      const actionActors = actors[index];
+      if (!actionActors?.length) return true;
+      const prefix = claim.slice(Math.max(0, match.index - IDENTITY_SCOPE_SCAN_LIMITS.subjectChars), match.index);
+      const subject = prefix.split(/(?:\b(?:while|whereas|although|because|since|when|if|unless|after|before|as|but)\b|[,;:])/iu).at(-1)?.trim() ?? '';
+      return actionActors.some(actor => actor.test(subject));
+    }))) return true;
   }
   return false;
+}
+
+/** Do not let a planned or wrong-actor registered action supply checkpoint topic terms. */
+export function gamingClearGuideTopicCoverageText(text: string, game?: string): string {
+  if (!game) return text;
+  const topics = resolveGamingRegistryGame(game)?.guideTopics ?? [];
+  if (!topics.length) return text;
+  const claims = text.split('\n').map(claim => claim.trim()).filter(Boolean);
+  return claims.filter(claim => {
+    const completeClaim = /[.!?]$/u.test(claim) ? claim : claim + '.';
+    const candidateTopics = topics.filter(topic => hasCorroboratingGuideLead(completeClaim, topic, game, true));
+    return !candidateTopics.length || candidateTopics.some(topic => hasCorroboratingGuideLead(completeClaim, topic, game, false, false));
+  }).join('\n');
 }
 
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
@@ -280,6 +309,15 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     && !sourceGameMatches(field.value))))
     return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
   const bodyScopes = acquiredBodySubjects(document.text);
+  const rawArticleScopeAssertions = document.metadata.articleScopeAssertions;
+  const articleScopeAssertionsValid = rawArticleScopeAssertions === undefined
+    || Array.isArray(rawArticleScopeAssertions) && rawArticleScopeAssertions.length <= 128
+      && rawArticleScopeAssertions.every(assertion => typeof assertion === 'string' && assertion.length > 0
+        && assertion.length <= 512 && assertion === assertion.trim());
+  const omittedArticleScopeAssertions = articleScopeAssertionsValid
+    ? (rawArticleScopeAssertions ?? []).filter(assertion => !bodyScopes.unquotedText.includes(assertion)) : [];
+  const articleScopeAssertionScopes = acquiredBodySubjects(articleScopeAssertionsValid
+    ? omittedArticleScopeAssertions.join('\n') : '');
   // The extractor repeats the first heading in the body without punctuation.
   // It is metadata, not a prefix that can hide the first acquired declaration.
   const aliasHeading = document.metadata.headings?.split(/\s+\|\s+/u, 1)[0]?.trim();
@@ -326,8 +364,19 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       }
   }
   const labels: RegExpExecArray[] = [];
-  let scopeScanComplete = bodyScopes.complete && acquiredAliases.complete;
+  let scopeScanComplete = bodyScopes.complete && acquiredAliases.complete
+    && articleScopeAssertionsValid && articleScopeAssertionScopes.complete;
   let acquiredLabels = 0;
+  for (const label of articleScopeAssertionScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
+    if (!sourceGameMatches(label[1]))
+      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
+  }
+  for (const { text: articleSubject, namedGameScope } of articleScopeAssertionScopes.subjects) {
+    const recognizedGame = detectGamingRegistryAlias(articleSubject, true, true);
+    if (namedGameScope && !sourceGameMatches(articleSubject)
+      || recognizedGame && !sourceGameMatches(recognizedGame.name))
+      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
+  }
   for (const label of bodyScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
     if (++acquiredLabels > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
     if (!sourceGameMatches(label[1]))
@@ -689,7 +738,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   }
   const qualifiedSourceEdition = !input.edition && applicability.edition
     && gamingEditionEvidenceMatchesRequest(applicability.edition, undefined, input);
-  if (!input.edition && applicability.edition && !qualifiedSourceEdition)
+  if (!input.edition && (applicability.edition || gamingRequestTargetsExtraContent(input)) && !qualifiedSourceEdition)
     return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
   if (qualifiedSourceEdition) scoped = selectGamingSourceEditionScopedEvidence(document, input, applicability.edition);
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
