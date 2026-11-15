@@ -161,11 +161,17 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) {
     // Preserve complete source-wide qualifiers attached to paragraph metadata.
     // Gameplay record cells and their qualifiers remain local to those rows.
-    const qualifiers = unit.kind === 'paragraph' && isGamingDocumentMetadataUnit(unit)
+    const metadataParagraph = unit.kind === 'paragraph' && isGamingDocumentMetadataUnit(unit);
+    const qualifiers = metadataParagraph
       ? (unit.context.qualifiers ?? []).filter(value => gamingProsePlatformDeclarationPattern().test(value)) : [];
     const intact = unit.integrity.status === 'complete' && unit.integrity.reasons.length === 0;
-    if (qualifiers.length && !intact) incompletePlatformScope = true;
     const retained = intact && qualifiers.length ? '\n' + qualifiers.join('\n') + '\n' : '';
+    if (metadataParagraph) {
+      const retainedPlatforms = new Set(Array.from(retained.matchAll(gamingProsePlatformDeclarationPattern()),
+        match => normalizeGamingPlatformIdentity(match[1])));
+      incompletePlatformScope ||= Array.from(unit.text.matchAll(gamingProsePlatformDeclarationPattern()))
+        .some(match => !retainedPlatforms.has(normalizeGamingPlatformIdentity(match[1])));
+    }
     proseText = proseText.replace(unit.text, () => retained);
   }
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);

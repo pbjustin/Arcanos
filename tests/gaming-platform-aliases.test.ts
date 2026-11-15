@@ -120,6 +120,9 @@ describe('question platform aliases preserve acquired applicability', () => {
     expect(read({ ...unit, kind: 'table_row', fields: [{ label: 'Mechanic', value: game }] }).platforms).toBeUndefined();
     expect(read({ ...unit, integrity: { status: 'partial', reasons: ['content_truncated'] } }))
       .toMatchObject({ metadataUnverified: true });
+    expect(read({ ...unit, context: { scope: unit.context.scope } })).toMatchObject({ metadataUnverified: true });
+    expect(read({ ...unit, text: unit.text + ' This walkthrough applies only to PC.' }))
+      .toMatchObject({ metadataUnverified: true });
   });
 
   it('matches the inferred PlayStation 5 request to an acquired PS5 guide', () => {
