@@ -86,6 +86,13 @@ describe('question platform aliases preserve acquired applicability', () => {
     expect(read(`Platforms: PC. ${prose} This walkthrough applies only to Xbox 360.`).metadataConflict).toBe(true);
   });
 
+  it.each(['"', '“'])('treats an incomplete %s quotation around a platform restriction as uncertain', quote => {
+    const result = extractGamingFreshnessMetadata({ publicUrl: url,
+      text: `${prose} ${quote}A reader wrote this. This walkthrough applies only to Xbox 360.` }, { game }, now, rules);
+    expect(result.platforms).toBeUndefined();
+    expect(result.metadataUnverified).toBe(true);
+  });
+
   it('matches the inferred PlayStation 5 request to an acquired PS5 guide', () => {
     const platform = resolveGamingQuestionScope(question).platform;
     expect(platform).toBe('PlayStation 5');

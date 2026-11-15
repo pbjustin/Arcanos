@@ -159,8 +159,18 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   // Shared label prefixes must not leave gameplay record fragments in prose.
   for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
+  // Balanced quotations were masked above. A remaining opener before a
+  // prose restriction leaves its attribution uncertain.
+  let firstUnpairedQuote: number | undefined;
   applicabilityScope.text = applicabilityScope.text.replace(gamingProsePlatformDeclarationPattern(),
-    (sentence: string, platform: string) => `Platforms: ${platform}`.padStart(sentence.length, ' '));
+    (sentence: string, platform: string, index: number, source: string) => {
+      firstUnpairedQuote ??= source.search(/["“‘`]|(?<![\p{L}\p{N}])'(?=\S)/u);
+      if (firstUnpairedQuote >= 0 && firstUnpairedQuote < index) {
+        applicabilityScope.complete = false;
+        return sentence;
+      }
+      return `Platforms: ${platform}`.padStart(sentence.length, ' ');
+    });
   const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
