@@ -15,25 +15,15 @@ function present(answer: string, options: { prompt?: string; singleSource?: bool
 }
 
 describe('Gaming guide delivery formatting', () => {
-  it('numbers the exact isolated colonisation answer and preserves all remaining text', () => {
-    const expected = [
-      warning,
-      'To start system colonisation in **Elite Dangerous**:',
-      '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within 15 light-years.\n2. Choose your initial starport or outpost.\n3. Pay the registration fee.',
-      'Your claim lasts 24 hours and is launched through the **System Colonisation Suite** in your ship, making you the System Architect and starting a countdown to the arrival of a System Colonisation Ship that acts as a temporary construction hub. The supplied excerpts cover registration and launch, not the full construction process or every prerequisite. [1]',
-      '**Source:** [Frontier Developments, System Colonisation Guide](https://www.elitedangerous.com/news/system-colonisation-guide) [1]',
-      "I can't verify live game state here."
-    ].join('\n\n');
-    const options = { prompt: colonisationRequest };
-    expect(present(isolatedColonisationAnswer, options)).toBe(expected);
-    expect(present(expected, options)).toBe(expected);
+  it('keeps the exact isolated colonisation answer when the trailing citation has ambiguous scope', () => {
+    expect(present(isolatedColonisationAnswer, { prompt: colonisationRequest })).toBe(isolatedColonisationAnswer);
   });
 
   it('numbers another clearly ordered procedure and preserves its scope and citations', () => {
-    const answer = 'To start the floodgate, open the **Valve Log**, select the spare slot, and then turn the handle twice. The upper gate opens. [1]';
+    const answer = 'To start the floodgate, open the **Valve Log**, select the spare slot, and then turn the handle twice. [1] The upper gate opens. [1]';
     const presented = present(warning + '\n\n' + answer + '\n\n' + source);
     expect(presented).toBe([warning, 'To start the floodgate:',
-      '1. Open the **Valve Log**.\n2. Select the spare slot.\n3. Turn the handle twice.',
+      '1. Open the **Valve Log**.\n2. Select the spare slot.\n3. Turn the handle twice. [1]',
       'The upper gate opens. [1]', source].join('\n\n'));
     expect(present(presented)).toBe(presented);
   });
@@ -49,9 +39,9 @@ describe('Gaming guide delivery formatting', () => {
     'This queues the request.',
     'That prevents the lock from resetting.'
   ])('numbers clear actions before a follow-on sentence (%s)', mechanics => {
-    const answer = `To start the floodgate, open the valve, and then enter the tunnel. ${mechanics} [1]`;
+    const answer = `To start the floodgate, open the valve, and then enter the tunnel. ${mechanics}`;
     expect(present(answer)).toBe(
-      `To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel.\n\n${mechanics} [1]`
+      `To start the floodgate:\n\n1. Open the valve.\n2. Enter the tunnel.\n\n${mechanics}`
     );
   });
 
@@ -92,6 +82,7 @@ describe('Gaming guide delivery formatting', () => {
     ['an optional action inside parentheses', 'To start the floodgate, open the map (Journal, optionally use the right-hand tab), select a site, and then pay the fee. [1]'],
     ['a link inside parentheses', 'To start the floodgate, open the map ([Journal](https://example.com/guide)), select a site, and then pay the fee. [1]'],
     ['mixed plain and linked citations', 'To start the floodgate, open the valve, and then enter the tunnel. [1] [2](https://example.com/guide)'],
+    ['a reference that starts the next sentence', 'To start the floodgate, open the valve, and then enter the tunnel. [1] says the upper gate opens at night.'],
     ['a station name containing an abbreviation', 'To start the floodgate, open the map, then visit St. James Station and pay the fee. [1]'],
     ['a model name containing an abbreviation', 'To start the floodgate, open the map, then select the Atlas Mk. II. [1]'],
     ['an initial in an item name', 'To start the floodgate, open the map, then collect the A. James Log. [1]'],
@@ -104,6 +95,8 @@ describe('Gaming guide delivery formatting', () => {
     ['actions in any order', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch in any order. [1]'],
     ['actions that must happen at once', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch at once. [1]'],
     ['an any-order qualification after the actions', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch. This opens the gate. You can press the switches in any order. [1]'],
+    ['an any-order qualification in the next paragraph', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch. [1]\n\nYou can press the switches in any order.'],
+    ['a simultaneous-action qualification in a later paragraph', 'To start the floodgate, open the control panel, press the red switch, and press the blue switch. [1]\n\nThis opens the gate.\n\nBoth switches must be pressed simultaneously.'],
     ['a negated action', 'To start the floodgate, open the valve, and then do not enter the tunnel. [1]'],
     ['a code span containing a comma', 'To start the floodgate, open the `Trial, Turn the Tide` item, and then enter the tunnel. [1]'],
     ['an unsupported citation boundary', 'To start the floodgate, open the valve, and then enter the tunnel. [1,]']
@@ -121,6 +114,8 @@ describe('Gaming guide delivery formatting', () => {
     'Walk me through starting the floodgate. Don’t use numbered bullets.',
     'Walk me through starting the floodgate. Answer as a single paragraph.',
     'Walk me through starting the floodgate. Use prose only.',
+    'Walk me through starting the floodgate. Keep it in plain prose.',
+    'Walk me through starting the floodgate. Keep the answer to one paragraph.',
     'Walk me through starting the floodgate. Prose only.',
     'Walk me through starting the floodgate. Please use one paragraph.',
     'Walk me through starting the floodgate. Avoid numbered lists.',
@@ -130,20 +125,38 @@ describe('Gaming guide delivery formatting', () => {
     expect(present(answer, { prompt })).toBe(answer);
   });
 
-  it('keeps overlapping source and answer gaps in their original scope', () => {
+  it('does not borrow a source limitation citation for gameplay', () => {
     const citedGap = 'The supplied excerpts cover the gate, but do not establish exact prices or the later procedure. [1]';
     const answerGap = 'Exact prices, additional materials, and later deadlines are not established here.';
     const answer = [
-      'To start the floodgate, open the valve, and then enter the tunnel. ' + citedGap,
+      'To start the floodgate, open the valve, and then enter the tunnel. The upper gate opens. ' + citedGap,
       source,
       answerGap
     ].join('\n\n');
-    const formatted = present(answer);
-    expect(formatted).toBe([
-      'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]',
-      '**Limitations**', citedGap, answerGap, source
+    expect(present(answer)).toBe(answer);
+  });
+
+  it.each(['[1]', '[1] Bring a friend if needed.', '[Source 1]', 'Source 1', '[the official guide](https://example.com/guide)', 'https://example.com/guide'])(
+    'keeps the procedure and mechanics together when a trailing citation could apply to either (%s)', citation => {
+      const answer = `To start the floodgate, open the valve, and then enter the tunnel. The upper gate opens. ${citation}`;
+      expect(present(answer)).toBe(answer);
+    }
+  );
+
+  it('preserves the preceding paragraph when a reference on its own line could cite the entire paragraph', () => {
+    const answer = 'To start the floodgate, open the valve, and then enter the tunnel. The upper gate opens.\n\n[1]';
+    expect(present(answer)).toBe(answer);
+  });
+
+  it('keeps the cited limitation with adjacent mechanics when their citation scope is ambiguous', () => {
+    const continuation = 'The upper gate opens. The supplied excerpts cover the gate, but do not establish exact prices. [1]';
+    const laterLimit = 'Exact prices and later deadlines are not established here.';
+    const answer = [
+      'To start the floodgate, open the valve, and then enter the tunnel. [1] ' + continuation, source, laterLimit
+    ].join('\n\n');
+    expect(present(answer)).toBe([
+      'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]', continuation, source, laterLimit
     ].join('\n\n'));
-    expect(present(formatted)).toBe(formatted);
   });
 
   it('collapses an exact repetition of the same cited limitation', () => {
@@ -193,7 +206,7 @@ describe('Gaming guide delivery formatting', () => {
     ['every prerequisite or the later procedure', 'Exact prices (20,000 credits on PC, 25,000 on console), additional materials, and later deadlines are not established here.']
   ])('keeps the complete source qualification and the separate answer qualification (%s)', (gap, answerGap) => {
     const citedGap = `The supplied excerpts cover registration, but do not establish ${gap}. [1]`;
-    const guide = 'To start the floodgate, open the valve, and then enter the tunnel. ' + citedGap;
+    const guide = 'To start the floodgate, open the valve, and then enter the tunnel. [1] ' + citedGap;
     expect(present([guide, source, answerGap].join('\n\n'))).toBe([
       'To start the floodgate:', '1. Open the valve.\n2. Enter the tunnel. [1]',
       '**Limitations**', citedGap, answerGap, source

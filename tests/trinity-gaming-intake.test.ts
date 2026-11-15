@@ -188,7 +188,21 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     ['a plain equivalent caveat', 'Current live game changes have not been verified.', 'Verify current live game state.', "I can't verify live game state here."],
     ['a quoted caveat', '> Current live-game changes have not been checked.', 'Verify current live game state.', "> Current live-game changes have not been checked.\n\nI can't verify live game state here."],
     ['a patch-specific caveat', 'The supplied excerpts do not establish compatibility with patch 2.0.', 'Verify current live game state.', "The supplied excerpts do not establish compatibility with patch 2.0.\n\nI can't verify live game state here."],
-    ['a separate platform limitation', 'Current live-game changes have not been checked.', 'Verify current live mechanics or platform availability.', "Current live-game changes have not been checked.\n\nI can't verify live game state or platform availability here."]
+    ['a separate platform limitation', 'Current live-game changes have not been checked.', 'Verify current live mechanics or platform availability.', "Current live-game changes have not been checked.\n\nI can't verify live game state or platform availability here."],
+    ['provider caveats followed by distinct limitations',
+      'This guidance follows the supplied official guide excerpts; current live-game changes have not been checked.\n\n'
+        + "I can't verify live game state here.\n\nThe supplied excerpts do not establish compatibility with patch 2.0.",
+      'Verify current live game state.',
+      "This guidance follows the supplied official guide excerpts. I can't verify live game state here.\n\n"
+        + 'The supplied excerpts do not establish compatibility with patch 2.0.'],
+    ['an attributed caveat quoted in Markdown',
+      "> Current live-game changes have not been checked.\n\nI can't verify live game state here.",
+      'Verify current live game state.',
+      "> Current live-game changes have not been checked.\n\nI can't verify live game state here."],
+    ['an authored pair inside an HTML block quotation',
+      "<blockquote>\n\nCurrent live-game changes have not been checked.\n\nI can't verify live game state here.\n\n</blockquote>",
+      'Verify current live game state.',
+      "<blockquote>\n\nCurrent live-game changes have not been checked.\n\nI can't verify live game state here.\n\n</blockquote>"]
   ])('preserves the required scope with %s', async (_label, disclaimer, blockedTask, required) => {
     const candidate = 'The official guide explains registration. [1]\n\n' + disclaimer;
     runStructuredReasoning.mockResolvedValueOnce({

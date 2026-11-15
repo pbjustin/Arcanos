@@ -610,7 +610,7 @@ it.each(['observed', 'structured'] as const)('delivers the original colonisation
   expect(sdk).toHaveBeenCalledTimes(3);
 });
 
-it('structures the reconnected installed colonisation answer while preserving its gameplay facts and limits', async () => {
+it('preserves the reconnected installed replay without borrowing the source limitation citation', async () => {
   scenario = frontierStartingFixture;
   replayColonisationAnswer = installedColonisationAnswer;
   const result = await harness(false).complete();
@@ -629,38 +629,12 @@ it('structures the reconnected installed colonisation answer while preserving it
   expect(answer.startsWith(partialExtractionWarning + '\n\n')).toBe(true);
   expect(answer.split(partialExtractionWarning)).toHaveLength(2);
 
-  const limitationsHeading = /^(?:#{1,6}\s+|\*\*)?(?:Important )?Limitations:?\*{0,2}\s*$/gimu;
-  const headings = [...answer.matchAll(limitationsHeading)];
-  expect(headings).toHaveLength(1);
-  const content = answer.slice(0, headings[0].index);
-  const steps = [...content.matchAll(/^(\d+)\. +(.+)$/gmu)];
-  expect(steps.map(step => step[1])).toEqual(['1', '2', '3', '4', '5']);
-  expect(steps.map(step => step[2])).toEqual([
-    expect.stringMatching(/open the \*\*System Colonisation Contact\*\* at a starport/iu),
-    expect.stringMatching(/select an unpopulated system within 15 ly/iu),
-    expect.stringMatching(/choose the initial station or outpost/iu),
-    expect.stringMatching(/pay the registration cost/iu),
-    expect.stringMatching(/launch the claim using your ship’s \*\*System Colonisation Suite\*\*\. \[1\]$/iu)
-  ]);
-  expect(content).toContain('This makes you the System Architect and starts a countdown to the arrival of the colonisation ship, which acts as the temporary construction hub. [1]');
-  const limitations = answer.slice(headings[0].index);
-  expect(limitations).toContain(
-    'The supplied excerpts explain registration and launching a claim, but do not establish every prerequisite or the later construction procedure. [1]\n\n'
-    + 'Exact prices, eligibility restrictions, construction materials, and deadlines beyond the initial claim window are not established here.'
-  );
-  for (const scope of [/every prerequisite/iu, /later construction procedure/iu, /exact prices/iu,
-    /eligibility restrictions/iu, /construction materials/iu, /deadlines beyond the initial claim window/iu,
-    /can(?:not|'t) verify live game state/iu]) {
-    expect([...limitations.matchAll(new RegExp(scope.source, 'giu'))]).toHaveLength(1);
-    expect(content).not.toMatch(scope);
-  }
-  expect(answer).toContain(`**Source:** [1] Frontier Developments, [System Colonisation Guide](${frontierGuideUrl}).`);
-  expect(answer).not.toMatch(/I can help with Explain|but I can't Establish|\b24 hours\b|\d+ credits|construction commodities/iu);
+  expect(answer).toBe(installedColonisationAnswer);
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(sdk).toHaveBeenCalledTimes(3);
 });
 
-it('delivers the exact isolated colonisation replay with three numbered starting actions', async () => {
+it('preserves the exact isolated replay with a paragraph-level citation', async () => {
   scenario = frontierStartingFixture;
   replayColonisationAnswer = isolatedColonisationAnswer;
   const result = await harness(false).complete();
@@ -668,47 +642,60 @@ it('delivers the exact isolated colonisation replay with three numbered starting
   expect(result.result).toMatchObject({
     state: 'answer_ready', coverageSatisfied: true, answer: { sources: [{ url: frontierGuideUrl }] }
   });
-  const [, guide, source, liveLimit] = isolatedColonisationAnswer.split('\n\n');
-  const mechanicsAndScope = guide.slice(guide.indexOf('Your claim'));
-  expect(result.result.answer?.response).toBe([
-    partialExtractionWarning,
-    'To start system colonisation in **Elite Dangerous**:',
-    '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within 15 light-years.\n2. Choose your initial starport or outpost.\n3. Pay the registration fee.',
-    mechanicsAndScope,
-    source,
-    liveLimit
-  ].join('\n\n'));
+  expect(result.result.answer?.response).toBe(isolatedColonisationAnswer);
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
-it('numbers the latest exact live replay before its claim reservation sentence', async () => {
+it('preserves the latest exact live replay when splitting could narrow citation scope', async () => {
   scenario = frontierStartingFixture;
   replayColonisationAnswer = latestLiveColonisationAnswer;
   const result = await harness(false).complete();
-  const [notice, guide, ...tail] = latestLiveColonisationAnswer.split('\n\n');
   expect(finalOutputs).toEqual([latestLiveColonisationAnswer]);
   expect(result.result).toMatchObject({
     state: 'answer_ready', coverageSatisfied: true,
     answer: {
       sources: [{ url: frontierGuideUrl }],
-      response: [
-        notice,
-        'To start system colonisation in **Elite Dangerous**:',
-        '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within **15 ly**.\n'
-          + '2. Choose your initial starport or orbital outpost.\n3. Pay the registration cost.',
-        guide.slice(guide.indexOf('This reserves')),
-        ...tail
-      ].join('\n\n')
+      response: latestLiveColonisationAnswer
     }
   });
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
   expect(sdk).toHaveBeenCalledTimes(3);
 });
 
-it('retains the exact numbered live replay with one live-game verification caveat', async () => {
+it('numbers the colonisation replay when the procedure has an explicit adjacent citation', async () => {
   scenario = frontierStartingFixture;
-  replayColonisationTasks = 'live-verification';
-  replayColonisationAnswer = numberedLiveColonisationAnswer.slice(0, -"\n\nI can't verify live game state here.".length);
+  const [notice, guide, ...tail] = latestLiveColonisationAnswer.split('\n\n');
+  replayColonisationAnswer = latestLiveColonisationAnswer.replace('registration cost. This reserves', 'registration cost. [1] This reserves');
+  const result = await harness(false).complete();
+  expect(finalOutputs).toEqual([replayColonisationAnswer]);
+  expect(result.result).toMatchObject({
+    state: 'answer_ready', coverageSatisfied: true,
+    answer: {
+      response: [
+        notice,
+        'To start system colonisation in **Elite Dangerous**:',
+        '1. Use the **System Colonisation Contact** at a starport to select an unpopulated system within **15 ly**.\n'
+          + '2. Choose your initial starport or orbital outpost.\n3. Pay the registration cost. [1]',
+        guide.slice(guide.indexOf('This reserves')),
+        ...tail
+      ].join('\n\n'),
+      sources: [{ url: frontierGuideUrl }]
+    }
+  });
+  expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
+it.each([
+  ['appends a required caveat', 'live-verification', false],
+  ['receives both caveats from the provider', 'live-verification', true],
+  ['receives both caveats with no blocked tasks', 'none', true]
+] as const)('retains the exact numbered live replay with one live-game caveat when Trinity %s', async (_label, tasks, complete) => {
+  scenario = frontierStartingFixture;
+  replayColonisationTasks = tasks;
+  replayColonisationAnswer = complete
+    ? numberedLiveColonisationAnswer
+    : numberedLiveColonisationAnswer.slice(0, -"\n\nI can't verify live game state here.".length);
   const expected = numberedLiveColonisationAnswer.replace(
     '; current live-game changes have not been checked.\n\n', '. ');
   const result = await harness(false).complete();
