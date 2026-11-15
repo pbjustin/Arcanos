@@ -11,7 +11,7 @@ export function normalizeGamingPlatformIdentity(value?: string): string {
 
 /** A complete source-wide sentence can state the same restriction as a Platform field. */
 export function gamingProsePlatformDeclarationPattern(): RegExp {
-  return /(?:^|(?<=[.!?;]\s)|(?<=\n))[ \t]{0,16}This (?:guide|walkthrough|article) applies only to (PC|Steam|Xbox 360|Xbox One|Xbox Series [XS]|PlayStation [345]|PS[345]|Nintendo Switch)(?=\.(?:\s|$)|$)/giu;
+  return /(?:^|(?<=[.!?;]\s)|(?<=\n))[ \t]{0,16}This (?:guide|walkthrough|article) applies only to (PC|Steam|Xbox 360|Xbox One|Xbox Series [XS]|PlayStation [345]|PS[345]|Nintendo Switch)(?:\.(?=\s|$)|$)/giu;
 }
 
 /** Explicit acquired applicability; absence never establishes a scoped match. */

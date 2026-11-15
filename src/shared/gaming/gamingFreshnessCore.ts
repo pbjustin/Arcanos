@@ -156,8 +156,18 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   const acquiredUnits = acquiredDocument === document ? evidenceUnits
     : readGamingEvidenceUnits(acquiredDocument.evidenceUnits, undefined, acquiredDocument.text);
   let proseText = acquiredDocument.text;
+  let incompletePlatformScope = false;
   // Shared label prefixes must not leave gameplay record fragments in prose.
-  for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
+  for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) {
+    // Preserve complete source-wide qualifiers attached to paragraph metadata.
+    // Gameplay record cells and their qualifiers remain local to those rows.
+    const qualifiers = unit.kind === 'paragraph' && isGamingDocumentMetadataUnit(unit)
+      ? (unit.context.qualifiers ?? []).filter(value => gamingProsePlatformDeclarationPattern().test(value)) : [];
+    const intact = unit.integrity.status === 'complete' && unit.integrity.reasons.length === 0;
+    if (qualifiers.length && !intact) incompletePlatformScope = true;
+    const retained = intact && qualifiers.length ? '\n' + qualifiers.join('\n') + '\n' : '';
+    proseText = proseText.replace(unit.text, () => retained);
+  }
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
   // Balanced quotations were masked above. A remaining opener before a
   // prose restriction leaves its attribution uncertain.
@@ -169,7 +179,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
         applicabilityScope.complete = false;
         return sentence;
       }
-      return `Platforms: ${platform}`.padStart(sentence.length, ' ');
+      return `Platforms: ${platform}\n`.padStart(sentence.length, ' ');
     });
   const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
@@ -193,7 +203,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ? selectGamingEditionScopedEvidence(document, { game: context.game, edition: inspectionEdition }) : undefined;
   // Local edition proof must not hide global restrictions outside the metadata
   // parser's bounds. Such labels remain uncertainty, never additional proof.
-  let invalidMetadata = !applicabilityScope.complete || acquiredDocument.metadata?.applicabilityUnverified === true;
+  let invalidMetadata = !applicabilityScope.complete || incompletePlatformScope || acquiredDocument.metadata?.applicabilityUnverified === true;
   if (editionScoped?.status === 'verified') {
     // Inspect bounded local values rather than repeatedly slicing the remaining
     // document. The full negative field scan below retains actual conflicts.
@@ -237,8 +247,9 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     if (claims.some(value => value.length === 0 || value.length > max)) invalidMetadata = true;
     const values = [...new Set(claims.filter(value => value.length > 0 && value.length <= max)
       .map(value => name === 'Edition' && normalizeGamingEditionIdentity(value) === 'base-game' ? 'base-game' : value))];
-    if (values.length > 1) conflict = true;
-    return values.length === 1 ? values[0] : undefined;
+    const identities = name === 'Platforms?' ? new Set(values.map(value => fieldValue('platform', value))) : new Set(values);
+    if (identities.size > 1) conflict = true;
+    return identities.size === 1 ? values[0] : undefined;
   };
   // Inspect every supported global field for contradictions without acquiring
   // late positive proof. Complete local gameplay records were removed above;

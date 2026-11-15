@@ -4,6 +4,7 @@ import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.
 import type { GamingFreshnessEvidence, GamingReviewedSourceRule } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingHybridDependencies } from '../src/services/gamingHybridKnowledge.js';
+import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceUnit } from '../src/shared/gaming/gamingEvidenceUnits.js';
 
 const fetch = jest.fn();
 const trinity = jest.fn();
@@ -91,6 +92,34 @@ describe('question platform aliases preserve acquired applicability', () => {
       text: `${prose} ${quote}A reader wrote this. This walkthrough applies only to Xbox 360.` }, { game }, now, rules);
     expect(result.platforms).toBeUndefined();
     expect(result.metadataUnverified).toBe(true);
+  });
+
+  it('treats equivalent platform fields and sentences as one restriction', () => {
+    const result = extractGamingFreshnessMetadata({ publicUrl: url,
+      text: `Platforms: PC. ${prose} This walkthrough applies only to Steam.` }, { game }, now, rules);
+    expect(result.metadataConflict).not.toBe(true);
+    expect(result.platforms).toEqual(['PC']);
+  });
+
+  it('keeps a numbered gameplay instruction outside the platform field', () => {
+    const result = extractGamingFreshnessMetadata({ publicUrl: url,
+      text: `${prose} This walkthrough applies only to Xbox 360. 1) Drive to the marker.` }, { game }, now, rules);
+    expect(result.platforms).toEqual(['Xbox 360']);
+    expect(result.metadataUnverified).not.toBe(true);
+  });
+
+  it('keeps a global restriction in an intact paragraph metadata unit out of gameplay scope', () => {
+    const qualifier = 'This walkthrough applies only to Xbox 360.';
+    const unit: GamingEvidenceUnit = { id: 'source-metadata', kind: 'paragraph', text: `Game: ${game}; ${qualifier}`,
+      fields: [{ label: 'Game', value: game }], context: { scope: 'source-metadata', qualifiers: [qualifier] },
+      provenance: { sourceUrl: url, strategy: 'prose', representation: 'html_dom', locator: 'paragraph:1',
+        policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }, integrity: { status: 'complete', reasons: [] } };
+    const read = (evidenceUnit: GamingEvidenceUnit) => extractGamingFreshnessMetadata({ publicUrl: url,
+      text: `${prose}\n${evidenceUnit.text}`, evidenceUnits: [evidenceUnit] }, { game }, now, rules);
+    expect(read(unit).platforms).toEqual(['Xbox 360']);
+    expect(read({ ...unit, kind: 'table_row', fields: [{ label: 'Mechanic', value: game }] }).platforms).toBeUndefined();
+    expect(read({ ...unit, integrity: { status: 'partial', reasons: ['content_truncated'] } }))
+      .toMatchObject({ metadataUnverified: true });
   });
 
   it('matches the inferred PlayStation 5 request to an acquired PS5 guide', () => {
