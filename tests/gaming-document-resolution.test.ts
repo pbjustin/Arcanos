@@ -23,7 +23,7 @@ const { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl
 const { GAMING_BUILD_RESOURCE_HARD_LIMITS } = await import('../src/services/gamingBuildResources.js');
 const { GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
 const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
-const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 
 function response(data: string, contentType: string) {
   return { data, headers: { 'content-type': contentType } };
@@ -192,6 +192,34 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.text).toContain('Camera guide');
     expect(document.evidenceUnits?.some(unit => unit.fields.some(field => /Platforms?/iu.test(field.label)))).not.toBe(true);
     expect(document.metadata.articleScopeAssertions).toBeUndefined();
+  });
+
+  it.each([
+    ['an article-owned list item', '<ul><li>This walkthrough applies only to Xbox 360.</li></ul>'],
+    ['an article-owned paragraph after another sentence', '<p>These notes explain the release. This walkthrough applies only to Xbox 360.</p>'],
+    ['an authored statement after a quotation', '<p>A list reads "The release differs. This walkthrough applies only to PC. An unrelated quote ends here". This walkthrough applies only to Xbox 360.</p>']
+  ])('retains a platform declaration from %s outside selected prose', async (_case, content) => {
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + '<aside>' + content + '</aside></article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.extraction.selectedContainer).toBe('#article-body');
+    expect(document.text).not.toMatch(/This walkthrough applies only to/iu);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' })).toMatchObject({ platforms: ['Xbox 360'] });
+  });
+
+  it('keeps conflicting platform declarations in the same omitted paragraph', async () => {
+    const aside = '<aside><p>This walkthrough applies only to Xbox 360. This walkthrough applies only to PC.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.text).not.toMatch(/This walkthrough applies only to/iu);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' })).toMatchObject({ metadataConflict: true });
+  });
+
+  it('keeps the attribution of a platform sentence after an unclosed quotation unresolved', async () => {
+    const aside = '<aside><p>A list reads "Review the release notes. This walkthrough applies only to Xbox 360.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.metadata.applicabilityUnverified).toBe(true);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' }).platforms).toBeUndefined();
   });
 
   it('keeps an omitted declaration when its only copy in the selected body is a quotation', async () => {

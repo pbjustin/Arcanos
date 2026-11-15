@@ -216,7 +216,7 @@ function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegist
     `(?<![\\p{L}\\p{N}])(?:${values.map(gamingRegistryLiteralPattern).join('|')})(?![\\p{L}\\p{N}])`;
   const entities = topic.entities.map(entity => new RegExp(literals([entity]), 'iu'));
   // An object in a separate phrase (such as "near the table") cannot complete the action.
-  const objectModifiers = String.raw`(?:\s+(?!(?:at|in|on|from|to|near|by|of|off|with|into|onto|beside|around|under|over|through|for|and|or|but|then|where|while|when|after|before|without)\b)[\p{L}\p{N}][\p{L}\p{N}'\u2019-]{0,31}){0,5}\s+`;
+  const objectModifiers = String.raw`(?:\s+(?!(?:at|in|on|from|to|near|by|of|off|with|into|onto|beside|around|under|over|through|for|and|or|but|then|where|while|when|after|before|without|overlooking|facing|above|below|behind|across|past|towards?|along)\b)[\p{L}\p{N}][\p{L}\p{N}'\u2019-]{0,31}){0,5}\s+`;
   const actions = topic.actions.map(action => new RegExp(
     `${literals(action.verbs)}${objectModifiers}${literals(action.objects)}`, 'iu'));
   const subjectGroupTail = '(?:\\s+(?:and|with)\\s+(?:(?:his|her|their)\\s+)?(?:(?:fellow|other|the|a|an)\\s+)?[\\p{L}][\\p{L}\\u2019\\x27-]*){0,4}';
@@ -314,10 +314,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     || Array.isArray(rawArticleScopeAssertions) && rawArticleScopeAssertions.length <= 128
       && rawArticleScopeAssertions.every(assertion => typeof assertion === 'string' && assertion.length > 0
         && assertion.length <= 512 && assertion === assertion.trim());
-  const omittedArticleScopeAssertions = articleScopeAssertionsValid
-    ? (rawArticleScopeAssertions ?? []).filter(assertion => !bodyScopes.unquotedText.includes(assertion)) : [];
   const articleScopeAssertionScopes = acquiredBodySubjects(articleScopeAssertionsValid
-    ? omittedArticleScopeAssertions.join('\n') : '');
+    ? (rawArticleScopeAssertions ?? []).join('\n') : '');
   // The extractor repeats the first heading in the body without punctuation.
   // It is metadata, not a prefix that can hide the first acquired declaration.
   const aliasHeading = document.metadata.headings?.split(/\s+\|\s+/u, 1)[0]?.trim();
@@ -367,16 +365,6 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   let scopeScanComplete = bodyScopes.complete && acquiredAliases.complete
     && articleScopeAssertionsValid && articleScopeAssertionScopes.complete;
   let acquiredLabels = 0;
-  for (const label of articleScopeAssertionScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
-    if (!sourceGameMatches(label[1]))
-      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
-  }
-  for (const { text: articleSubject, namedGameScope } of articleScopeAssertionScopes.subjects) {
-    const recognizedGame = detectGamingRegistryAlias(articleSubject, true, true);
-    if (namedGameScope && !sourceGameMatches(articleSubject)
-      || recognizedGame && !sourceGameMatches(recognizedGame.name))
-      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
-  }
   for (const label of bodyScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
     if (++acquiredLabels > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
     if (!sourceGameMatches(label[1]))
@@ -602,6 +590,18 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       if (expansionQualifier(qualifier)) editionScopeConflict = true;
       else if (!(editionQualifier(qualifier))) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.distinct_body_scope', 'body_scope');
     }
+  }
+  // Bound article assertions retain their acquired context, even when the
+  // selected prose contains the same words in a comparison or quotation.
+  for (const label of articleScopeAssertionScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
+    if (!sourceGameMatches(label[1]))
+      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
+  }
+  for (const { text: articleSubject, namedGameScope } of articleScopeAssertionScopes.subjects) {
+    const recognizedGame = detectGamingRegistryAlias(articleSubject, true, true);
+    if (namedGameScope && !sourceGameMatches(articleSubject)
+      || recognizedGame && !sourceGameMatches(recognizedGame.name))
+      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
   }
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
     const identity = normalizeGamingGameIdentity(value);

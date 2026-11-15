@@ -28,7 +28,8 @@ import {
 import { filterGamingDocumentInstructions, gamingDocumentFetchOptions } from "@services/gamingDocumentExtraction.js";
 import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjectionCore.js";
 import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
-import { gamingApplicabilityAssertionText } from '@shared/gaming/gamingGameRegistry.js';
+import { gamingApplicabilityAssertionContext, gamingApplicabilityAssertionText } from '@shared/gaming/gamingGameRegistry.js';
+import { hasStandaloneGamingArticleAssertion } from '@shared/gaming/gamingGameDeclaration.js';
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
 import type { GamingEvidenceUnit, GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
@@ -435,7 +436,13 @@ export async function resolveGamingDocument(
     const selectedScope = articleAssertions?.length
       ? gamingApplicabilityAssertionText(normalizeGamingDocumentInstructionCharacters(acquired.text)) : undefined;
     const selectedProse = selectedScope?.complete ? selectedScope.text.replace(/\s+/gu, ' ').trim() : '';
-    const retainedArticleAssertions = articleAssertions?.filter(assertion => !selectedProse.includes(assertion));
+    const heading = acquired.structure?.articleScopeHeading;
+    // The acquisition flattens a verified article's h1 into the selected text.
+    const articleBody = heading && selectedProse.startsWith(heading + ' ')
+      && !/\b(?:unlike|compared|comparison|contrast|similar|like|without|excluding|not)\b/iu.test(heading)
+      && !gamingApplicabilityAssertionContext(selectedProse, heading.length + 1).reference
+      ? selectedProse.slice(heading.length + 1) : selectedProse;
+    const retainedArticleAssertions = articleAssertions?.filter(assertion => !hasStandaloneGamingArticleAssertion(articleBody, assertion));
     const safeExtraction = retainedArticleScope ? { ...ordinaryExtraction, articleScope: retainedArticleScope } : ordinaryExtraction;
     options.onExtraction?.(safeExtraction);
     if (boundedRaw) options.onRawDocument?.(boundedRaw);

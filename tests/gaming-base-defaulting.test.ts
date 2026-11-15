@@ -142,6 +142,16 @@ describe('ordinary base-game request interpretation', () => {
     expect((await acquire('Edition: Base game.', prose, undefined, request)).accepted).toEqual([]);
     expect((await acquire('', prose, undefined, request)).accepted).toEqual([]);
   });
+  it('does not substitute edition-less gameplay evidence for an unspecified DLC request', async () => {
+    const request = { ...input, prompt: 'Explain DLC Samurai katana attacks.' };
+    const baseline = await acquire();
+    const freshness = evaluateGamingFreshness({ question: request.prompt, game: request.game, mode: request.mode,
+      evidence: baseline.accepted.map(item => item.freshness) });
+    expect(freshness).toMatchObject({ usable: false, reasons: expect.arrayContaining(['EDITION_UNVERIFIED']) });
+    expect(assessGamingClearEvidence(request, baseline.knowledge, { identityVerified: true, requireRequestCoverage: true })
+      .gates.compatibility).toBe('unknown');
+    expect((await acquire('', prose, undefined, request)).decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED');
+  });
   it('does not let an acquired guide choose the expansion for an unnamed extra-content request', async () => {
     const request = { ...input, prompt: 'What Samurai katana attacks are available outside the base game?' };
     const result = await acquire('Edition: Shadow of the Erdtree.',

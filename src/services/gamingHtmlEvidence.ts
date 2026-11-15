@@ -63,7 +63,7 @@ const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Ga
 const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|Versions?|Source use|Usage restrictions)\s*:?$/iu;
 interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
 const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
-const ARTICLE_SCOPE_BLOCKS = 'article,section,header,footer,nav,main,p,div,aside,h1,h2,h3,h4,h5,h6,blockquote,figure,ul,ol,table,br';
+const ARTICLE_SCOPE_BLOCKS = 'article,section,header,footer,nav,main,p,div,aside,h1,h2,h3,h4,h5,h6,blockquote,figure,ul,ol,li,table,br';
 const ARTICLE_SCOPE_INLINE = 'span,b,strong,em,i,small';
 const ARTICLE_PLATFORM_SCOPE_PREFIX = 'paragraph:article-platform:';
 const ARTICLE_PLATFORM_FIELD = /^Platforms?\s*:\s*([^.!?;|]{1,256})\.?$/iu;
@@ -96,6 +96,27 @@ function readArticleGameAssertions(value: string): { statements: string[]; compl
   }
   readUntil(owned.text.length);
   return { statements, complete: owned.complete };
+}
+
+function readArticlePlatforms(value: string): { platforms: Set<string>; complete: boolean } {
+  const declaration = gamingProsePlatformDeclarationPattern();
+  const platforms = new Set<string>();
+  if (!declaration.test(value)) {
+    const field = ARTICLE_PLATFORM_FIELD.exec(value)?.[1].trim();
+    if (field) platforms.add(field);
+    return { platforms, complete: true };
+  }
+  const owned = gamingApplicabilityAssertionText(value);
+  const firstUnpairedQuote = owned.text.search(/["“‘`]|(?<![\p{L}\p{N}])'(?=\S)/u);
+  let complete = owned.complete;
+  declaration.lastIndex = 0;
+  for (const match of value.matchAll(declaration)) {
+    // Preserve the original sentence boundary and skip masked quotation text.
+    if (owned.text.slice(match.index, match.index + match[0].length) !== match[0]) continue;
+    if (firstUnpairedQuote >= 0 && firstUnpairedQuote < match.index) complete = false;
+    else platforms.add(match[1]);
+  }
+  return { platforms, complete };
 }
 
 // One reviewed React transport form, interpreted as static DOM relationships,
@@ -380,18 +401,16 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     // An article-wide restriction still binds the opening when a sibling note
     // is removed or its heading loses the original block boundary in prose.
     const excluded = `blockquote,q,code,pre,[role="menu"],.d-none,.visually-hidden,.sr-only,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`;
-    const platformDeclaration = gamingProsePlatformDeclarationPattern();
     const { article } = articleOwner;
     const detachedGuides = new Set($(article).find('aside').toArray()
       .filter(aside => hasSeparateArticleGuideScope($, aside, excluded)));
-    for (const node of [article, ...$(article).find('p,div,section,aside,h2,h3,h4,h5,h6').toArray()]) {
+    for (const node of [article, ...$(article).find('p,div,section,aside,h2,h3,h4,h5,h6,li').toArray()]) {
       if (deadlineExpired()) return result;
       for (const { value, intact } of articleScopeTextRuns($, node, excluded)) {
-        const { statements, complete } = readArticleGameAssertions(value);
-        platformDeclaration.lastIndex = 0;
-        const match = platformDeclaration.exec(value);
-        const platform = match?.[0] === value ? match[1] : ARTICLE_PLATFORM_FIELD.exec(value)?.[1].trim();
-        if ((complete && !statements.length && !platform) || $(node).closest(excluded).length) continue;
+        const { statements, complete: gameScopeComplete } = readArticleGameAssertions(value);
+        const { platforms, complete: platformScopeComplete } = readArticlePlatforms(value);
+        const complete = gameScopeComplete && platformScopeComplete;
+        if ((complete && !statements.length && !platforms.size) || $(node).closest(excluded).length) continue;
         if (detachedGuides.size && $(node).parents('aside').addBack('aside').toArray().some(aside => detachedGuides.has(aside)))
           continue;
         if (!intact || !complete) {
@@ -403,7 +422,8 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
             articleScopeUnverified = true;
           else articleScopeAssertions.add(statement);
         }
-        if (platform && !articlePlatforms.has(platform.toLowerCase())) {
+        for (const platform of platforms) {
+          if (articlePlatforms.has(platform.toLowerCase())) continue;
           if (articlePlatforms.size >= 32) articleScopeUnverified = true;
           else articlePlatforms.set(platform.toLowerCase(), { node, platform });
         }

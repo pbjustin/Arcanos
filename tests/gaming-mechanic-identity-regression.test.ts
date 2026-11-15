@@ -167,12 +167,18 @@ describe('independently acquired game and mechanic ownership', () => {
       .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
   });
 
+  it('verifies a registered action directed at the boat itself', () => {
+    expect(assessGtaArticleLead('Niko steps off the boat in Liberty City with Roman.'))
+      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
+  });
+
   it.each([
     ['an uncertain planned scene', 'The expected scene has Niko climb off the boat in Liberty City with Roman.'],
     ['a planned event', 'The plan says Niko climbs off the boat in Liberty City with Roman.'],
     ['a prospective event', 'Niko is expected to climb off the boat in Liberty City with Roman.'],
     ['a different actor', 'Niko and Roman wait in Liberty City while a sailor climbs off the boat.'],
     ['a coordinated different actor', 'Roman waits in Liberty City with Niko and watches a sailor climb off the boat.'],
+    ['an unrelated object overlooking the boat', 'Niko steps off a platform overlooking the boat in Liberty City with Roman.'],
   ])('does not corroborate a registered guide topic from %s', (_reason, lead) => {
     expect(assessGtaArticleLead(lead)).toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
   });
@@ -194,6 +200,32 @@ describe('independently acquired game and mechanic ownership', () => {
     const assertion = 'In Grand Theft Auto V, this guide covers a related mission.';
     expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
       [assertion], `\"${assertion}\"`)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it('keeps an omitted affirmative contradiction when the selected prose repeats it only as a comparison', () => {
+    const lead = 'Niko steps off the boat in Liberty City with Roman.';
+    const assertion = 'in the game Grand Theft Auto V, drive Franklin to the Vinewood sign.';
+    expect(assessGtaArticleLead(lead, undefined, `Unlike ${assertion}`)).toMatchObject({ status: 'verified' });
+    expect(assessGtaArticleLead(lead, [assertion], `Unlike ${assertion}`))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+        diagnostic: { ruleId: 'gaming.identity.article_scope_assertion_conflict' } });
+  });
+
+  it('keeps the acquired HTML restriction even when the selected prose contains its comparison copy', async () => {
+    const opening = 'Niko steps off the boat in Liberty City with Roman.';
+    const assertion = 'in the game Grand Theft Auto V, drive Franklin to the Vinewood sign.';
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: '<article><header><p>GTA IV - Story Mission Guide</p><h1>The Cousins Bellic</h1></header>'
+        + `<div id="article-body"><p>${opening}</p><p>Unlike ${assertion}</p></div>`
+        + `<aside><p>${assertion}</p></aside></article>` });
+    const document = await resolveGamingDocument(gtaArticleUrl);
+    expect(document.extraction.selectedContainer).toBe('#article-body');
+    expect(document.text).toContain(`Unlike ${assertion}`);
+    expect(document.metadata.articleScopeAssertions).toContain(assertion);
+    const game = 'Grand Theft Auto IV';
+    expect(assessGamingClearSourceIdentity(document, { game, mode: 'guide', prompt: 'What happens first?' },
+      assessGamingSourcePolicy(gtaArticleUrl, game), true))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
 
   it('does not classify an arbitrary article topic clause as a foreign game', () => {

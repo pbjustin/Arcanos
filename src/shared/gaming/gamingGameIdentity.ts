@@ -37,13 +37,35 @@ export function normalizeGamingEvidenceGameIdentity(game: string): string {
 
 /** Source-attributed title descriptions never choose a player's edition. */
 function gamingRequestScopeText(question: string): string {
-  return question.replace(/(?:^|[.!?]\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu, ' ');
+  return question.replace(/https?:\/\/[^\s)]+/giu, ' ')
+    .replace(/(?:^|[.!?]\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|supplied|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu, ' ');
 }
+
+const NEGATED_CONTENT_ACTION = String.raw`(?:not|never|don['’]t|doesn['’]t)\s+(?:include|use|recommend|suggest|cover|mention|show|give)`;
+const OUTSIDE_BASE_EXCLUSION = new RegExp(String.raw`\b(?:${NEGATED_CONTENT_ACTION}|avoid|exclude|excluding|without)(?:\s+(?:any|anything|me|the|those|extra|additional|content|material|gear|items?|options?|steps?|stuff)){0,5}\s*$`, 'iu');
 
 function withoutOutsideBaseGameClause(question: string): string {
   return question.replace(/"[^"]*"|“[^”]*”|`[^`]*`|‘[^’]*’|(?<![\p{L}\p{N}])'[^']*'(?![\p{L}\p{N}])|\boutside\s+(?:of\s+)?(?:the\s+)?base[\s-]+game\b/giu,
-    (clause: string, offset: number) => !/^outside\b/iu.test(clause)
-      || /\b(?:not|never|isn['’]t|aren['’]t)(?:\s+available)?\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
+    (clause: string, offset: number) => {
+      if (!/^outside\b/iu.test(clause)) return clause;
+      const before = question.slice(0, offset).split(/[.!?;,\n]|\b(?:but|however|instead|yet)\b/iu).at(-1) ?? '';
+      const directlyNegated = /\b(?:not|never|isn['’]t|aren['’]t)(?:\s+available)?\s*$/iu.test(before);
+      return directlyNegated || OUTSIDE_BASE_EXCLUSION.test(before) ? clause : ' ';
+    });
+}
+
+// A necessity question asks for availability evidence without choosing an expansion.
+function withoutDlcNecessityQuestion(question: string): string {
+  return question.replace(/\bis\s+dlc\s+(?:required|needed|necessary)\s+to\s+obtain\b/giu, ' ');
+}
+
+function withoutExcludedExpansionScope(question: string, names: readonly string[] = []): string {
+  const genericExpansion = String.raw`dlcs?|expansions?(?:\s+content)?`;
+  const expansionPattern = [genericExpansion, ...names.map(gamingRegistryLiteralPattern)].join('|');
+  const qualifier = String.raw`\s+(?:(?:any|the)\s+)?`;
+  const negativeScope = new RegExp(String.raw`\b(?:(?:without|no|excluding)${qualifier}(?:${expansionPattern})|${NEGATED_CONTENT_ACTION}${qualifier}(?:${genericExpansion}))\b`, 'giu');
+  return question.replace(negativeScope, (clause: string, offset: number) =>
+    /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
 }
 
 /** Request interpretation only; never an assertion about acquired source metadata. */
@@ -57,8 +79,7 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
     // A missing catalog entry supplies no edition default. Explicit generic
     // base-only requests still constrain acquired expansion evidence.
     const base = /\bbase[\s-]+game\b/iu.test(question);
-    const remaining = question.replace(/\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?)\b/giu,
-      (clause: string, offset: number) => /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
+    const remaining = withoutExcludedExpansionScope(question);
     const without = remaining !== question;
     return !outsideBaseGame && (base || without) && !/\b(?:dlcs?|expansions?)\b/iu.test(remaining) ? 'base-game' : undefined;
   }
@@ -86,12 +107,8 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
     .flatMap(edition => [edition.name, ...edition.aliases]);
   const named = expansionNames.length ? new RegExp(`\\b(?:${[...new Set(expansionNames)].map(gamingRegistryLiteralPattern).join('|')})\\b`, 'iu') : undefined;
   const baseRequested = /\bbase[\s-]+game\b/iu.test(question);
-  // A necessity question asks for evidence; it does not itself choose an expansion.
-  const withoutNecessity = question.replace(/\bis\s+dlc\s+(?:required|needed|necessary)\s+to\s+obtain\b/giu, ' ');
-  const expansionPattern = ['dlcs?', 'expansions?(?:\\s+content)?', ...expansionNames.map(gamingRegistryLiteralPattern)].join('|');
-  const negativeScope = new RegExp(`\\b(?:without|no|excluding)\\s+(?:(?:any|the)\\s+)?(?:${expansionPattern})\\b`, 'giu');
-  const remaining = withoutNecessity.replace(negativeScope, (clause: string, offset: number) =>
-    /\b(?:not|without|no)\s*$/iu.test(withoutNecessity.slice(0, offset)) ? clause : ' ');
+  const withoutNecessity = withoutDlcNecessityQuestion(question);
+  const remaining = withoutExcludedExpansionScope(withoutNecessity, expansionNames);
   const negativeRequested = remaining !== withoutNecessity;
   const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || Boolean(named?.test(remaining));
   if (expansionRequested && (baseRequested || negativeRequested)) return undefined;
@@ -122,7 +139,9 @@ export interface GamingEditionRequestContext {
 export function gamingRequestTargetsExtraContent(input: GamingEditionRequestContext): boolean {
   if (input.edition) return false;
   const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
-  return withoutOutsideBaseGameClause(question) !== question;
+  const extraContent = withoutOutsideBaseGameClause(question) !== question
+    || /\b(?:dlcs?|expansions?)\b/iu.test(withoutExcludedExpansionScope(withoutDlcNecessityQuestion(question)));
+  return extraContent && resolveGamingRequestEdition(input) === undefined;
 }
 
 /** Eligibility only: acquired identity, intact scope and source restrictions still need independent inspection. */
