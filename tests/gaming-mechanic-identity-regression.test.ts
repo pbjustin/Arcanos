@@ -33,6 +33,14 @@ describe('independently acquired game and mechanic ownership', () => {
     expect(assess(title, prose)).toMatchObject({ status: 'verified' });
   });
 
+  it('retains reviewed ownership under a second registered game and its alias', () => {
+    const title = 'XC2 Driver Arts guide';
+    const prose = 'This guide covers XC2 Driver Arts. Driver Arts is a mechanic in Xenoblade Chronicles 2. '
+      + 'In Xenoblade Chronicles 2, land auto-attacks while fighting alongside Pyra to charge Rex’s Driver Arts.';
+    expect(assess(title, prose, 'Xenoblade Chronicles 2')).toMatchObject({ status: 'verified' });
+    expect(assess(title, prose, 'Elden Ring')).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
   it('accepts an unfamiliar game-qualified topic without a production game exception', () => {
     const title = 'Copper Vale Orchard Restoration guide';
     const prose = 'This guide covers Copper Vale Orchard Restoration. Orchard Restoration is a mechanic in Copper Vale. In Copper Vale, players restore the orchard by delivering supplies and monitoring the project manifest.';

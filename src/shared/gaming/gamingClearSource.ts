@@ -390,14 +390,19 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     return result('conflict', 'GAME_MISMATCH', 'gaming.identity.acquired_topic_ownership_conflict', 'body_scope');
   const acquiredTopicSubject = (value: string): boolean => {
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
-    const subject = detected.game ?? value.replace(/\s+(?:guide|walkthrough|wiki|tips?)\s*$/iu, '');
-    const identity = normalizeGamingGameIdentity(subject);
+    const topicTitle = value.replace(/\s+(?:guide|walkthrough|wiki|tips?)\s*$/iu, '');
+    // Alias detection returns only the game. Keep the acquired suffix so a
+    // registered game can still corroborate the exact topic its guide names.
+    const identity = normalizeGamingGameIdentity(detected.source === 'alias' ? topicTitle : detected.game ?? topicTitle);
+    if (detected.source === 'alias' && (!detected.game || !sourceGameMatches(detected.game)
+      || !registryGame?.guideTopics?.some(topic =>
+        [...expected].some(game => identity === `${game}-${normalizeGamingGameIdentity(topic.heading)}`)))) return false;
     // A game-qualified mechanic still needs exact, independently acquired
     // ownership of its suffix. A matching family prefix alone proves nothing.
     const scopes = acquiredTopicScopes.get(identity)
       ?? [...expected].filter(game => identity.startsWith(`${game}-`))
         .flatMap(game => acquiredTopicScopes.get(identity.slice(game.length + 1)) ?? []);
-    return detected.source !== 'alias' && Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
+    return Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
       && scopes.every(scope => sourceGameMatches(scope.game)));
   };
   // Pooled related headings can establish neither positive game identity nor
