@@ -65,12 +65,12 @@ function inventory(target, active = false, stopped = false) {
       deploymentTriggers: connection([]), variables: connection([]), volumeInstances: connection([]) },
     privateNetworks: [{ projectId: target.projectId, environmentId: target.environmentId, deletedAt: null }], runtimeTcp: [] };
 }
-function fixture(t) {
+function fixture(t, profile = 'gaming-guide') {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'arcanos-controller-test-')); chmodSync(directory, 0o700);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const target = targetFixture(); const artifactDirectory = path.join(directory, 'artifacts'); mkdirSync(artifactDirectory, { mode: 0o700 });
   writeFileSync(path.join(artifactDirectory, 'source.tar'), 'opaque-source'); writeFileSync(path.join(artifactDirectory, 'build.tar'), 'opaque-build');
-  const manifest = { version: 1, repository: target.repository, sourceCommit: sha, prNumber: 1528, profile: 'gaming-guide',
+  const manifest = { version: 1, repository: target.repository, sourceCommit: sha, prNumber: 1528, profile,
     workflowRunId: '1234', workflowRunAttempt: 1, controllerRevision: trustedSha, treeSha, compiledSha256,
     files: { 'source.tar': hash('opaque-source'), 'build.tar': hash('opaque-build') } };
   const raw = JSON.stringify(manifest) + '\n'; writeFileSync(path.join(artifactDirectory, 'candidate-attestation.json'), raw);
@@ -80,7 +80,7 @@ function fixture(t) {
   const environment = { WORKFLOW_RUN_ID: '1234', WORKFLOW_RUN_ATTEMPT: '1', CONTROLLER_REVISION: trustedSha, GITHUB_ACTOR: 'maintainer',
     GITHUB_TOKEN: 'fixture-github-token', RAILWAY_LIVE_VALIDATION_TOKEN: 'fixture-railway-token', LIVE_VALIDATION_ARTIFACT_DIRECTORY: artifactDirectory };
   const argv = ['--target-file', targetFile, '--artifact-attestation-file', artifactFile, '--pr-number', '1528', '--commit-sha', sha,
-    '--profile', 'gaming-guide', '--evidence-dir', path.join(directory, 'evidence')];
+    '--profile', profile, '--evidence-dir', path.join(directory, 'evidence')];
   return { directory, target, binding, artifactDirectory, targetFile, artifactFile, argv, environment };
 }
 function ghFixture(f, options = {}) {
@@ -225,12 +225,34 @@ test('CLI accepts PR, exact SHA or both, and requires paired paid flags with har
   assert.equal(parseLiveValidationControllerArguments(without('--commit-sha')).prNumber, 1528);
   assert.equal(parseLiveValidationControllerArguments(without('--pr-number')).commitSha, sha);
 });
+test('CLI allows only reviewed profile names and keeps Elite Dangerous as the default', () => {
+  const base = ['--target-file', path.resolve('target.json'), '--artifact-attestation-file', path.resolve('attestation.json'),
+    '--evidence-dir', path.resolve('evidence'), '--pr-number', '1600'];
+  assert.equal(parseLiveValidationControllerArguments(base).profile, 'gaming-guide');
+  assert.equal(parseLiveValidationControllerArguments([...base, '--profile', 'gaming-gta-iv']).profile, 'gaming-gta-iv');
+  for (const name of ['gta-iv', '../gta-iv-profiles.json', 'constructor', 'https://example.test/profiles.json'])
+    assert.throws(() => parseLiveValidationControllerArguments([...base, '--profile', name]),
+      { code: 'LIVE_VALIDATION_ARGUMENT_INVALID' });
+});
+
 test('default preflight validates exact opaque artifacts without network, credentials or deployment', async t => {
   const f = fixture(t);
   const result = await runLiveValidationController(f.argv, { environment: f.environment, readGitState: () => git,
     createGitHubApi: () => { throw new Error('must remain offline'); }, createRailwayApi: () => { throw new Error('must remain offline'); } });
   assert.equal(result.status, 'PASS'); assert.equal(result.infrastructureMutation, false); assert.equal(result.paidProviderEnabled, false);
 });
+test('offline preflight binds the checked-in GTA IV suite to the attested name', async t => {
+  const f = fixture(t, 'gaming-gta-iv');
+  const dependencies = { environment: f.environment, readGitState: () => git,
+    createGitHubApi: () => { throw new Error('must remain offline'); },
+    createRailwayApi: () => { throw new Error('must remain offline'); } };
+  const loaded = JSON.parse(readFileSync(path.join(ROOT, 'examples/live-validation/gta-iv-profiles.json'), 'utf8'));
+  const result = await runLiveValidationController(f.argv, dependencies);
+  assert.equal(result.profileHash, validationHash(loaded));
+  assert.equal(result.paidProviderEnabled, false);
+  await assert.rejects(runLiveValidationController(f.argv.map(arg => arg === 'gaming-gta-iv' ? 'gaming-guide' : arg), dependencies));
+});
+
 test('tightened target limits require exact CLI agreement before preflight, execution or cleanup I/O', async t => {
   const f = fixture(t);
   f.target.limits = { maxSpendMicroUsd: 1_000_000, maxRequests: 31, maxWorkflows: 1, durationMs: 300_000 };

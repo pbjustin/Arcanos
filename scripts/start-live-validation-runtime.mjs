@@ -8,6 +8,7 @@ import { validateLiveValidationTarget } from './live-validation-target.mjs';
 import { createLiveValidationSourceGuard } from './live-validation-egress.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { LIVE_VALIDATION_TOKEN_LIMITS } from './live-validation-budget.mjs';
+import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
 import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, LIVE_PREVIEW_PRESENTATION_PROFILE, sanitizeLivePreviewPresentation,
   verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 
@@ -44,14 +45,19 @@ export function validationProfilePassed(profile, moduleResult, observation, prov
 }
 
 /** Authenticated readiness precedes one bounded paid run; no request can reset its budget. */
-export function createValidationRuntimeApplication({ target, identity, profiles, buildManifest, testToken, apiKey,
+export function createValidationRuntimeApplication({ target, identity, profiles, profileSuites = [profiles], buildManifest, testToken, apiKey,
   createProvider = createLiveValidationProvider, createAdapter = realGamingAdapter,
   resolveResponseModelIdentity = async () => (await import('../dist/shared/gpt/generativeModelPolicyCore.js')).assertGenerativeModelResponseIdentity,
   runRequest = async (_options, work) => work(), getRemainingMs = () => null, now = Date.now }) {
   requireValidation(TOKEN.test(testToken ?? ''), 'LIVE_VALIDATION_TEST_TOKEN_REQUIRED');
-  requireValidation(profiles?.version === 2 && profiles.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE,
-    'LIVE_VALIDATION_PROFILE_INVALID');
-  const profileHash = validationHash(profiles);
+  requireValidation(Array.isArray(profileSuites) && profileSuites.length > 0
+    && profileSuites.length <= LIVE_VALIDATION_PROFILE_NAMES.length, 'LIVE_VALIDATION_PROFILE_INVALID');
+  const profilesByHash = new Map(profileSuites.map(suite => {
+    requireValidation(suite?.version === 2 && suite.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE,
+      'LIVE_VALIDATION_PROFILE_INVALID');
+    return [validationHash(suite), suite];
+  }));
+  requireValidation(profilesByHash.size === profileSuites.length, 'LIVE_VALIDATION_PROFILE_INVALID');
   let readinessObserved = false; let runClaimed = false; let admitting = false; let active = false; let admitted;
   const completed = new Set();
   const authorizeRequest = ({ method, path, headers, rawHeaders }) => {
@@ -85,13 +91,14 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
         requireValidation(readinessObserved && !runClaimed && !admitting, 'LIVE_VALIDATION_RUN_ALREADY_CLAIMED_OR_NOT_READY');
         admitting = true; ownsAdmission = true;
         const body = await readValidationJson(request, 8_192);
+        const profileSuite = profilesByHash.get(body?.profileHash);
         requireValidation(body && !Array.isArray(body)
           && Object.keys(body).length === 7 && ['runId', 'prNumber', 'commitSha', 'runtimeDeploymentId', 'profileHash',
             'expiresAtMs', 'paidAuthorized'].every(key => Object.hasOwn(body, key))
           && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(body.runId ?? '')
           && Number.isSafeInteger(body.prNumber) && body.prNumber > 0 && body.prNumber <= 1_000_000_000
           && body.commitSha === identity.sourceCommit
-          && body.runtimeDeploymentId === identity.deploymentId && body.profileHash === profileHash
+          && body.runtimeDeploymentId === identity.deploymentId && profileSuite
           && body.paidAuthorized === true && Number.isSafeInteger(body.expiresAtMs)
           && body.expiresAtMs > now() && body.expiresAtMs <= now() + target.limits.durationMs,
         'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH');
@@ -103,7 +110,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
         requireValidation(body.expiresAtMs > now(), 'LIVE_VALIDATION_RUN_EXPIRED');
         const provider = createProvider({ target, identity, apiKey, now, expiresAtMs: body.expiresAtMs,
           observation: () => observation, getRemainingMs, responseModelIdentity, generationOnly: true });
-        admitted = { ...body, provider, observation };
+        admitted = { ...body, profileSuite, provider, observation };
         try {
           admitted.adapter = await createAdapter({ target, identity, provider });
           requireValidation(body.expiresAtMs > now(), 'LIVE_VALIDATION_RUN_EXPIRED');
@@ -123,7 +130,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       requireValidation(request.method === 'POST' && request.url === '/acceptance', 'LIVE_VALIDATION_ROUTE_DENIED');
       requireValidation(!active, 'LIVE_VALIDATION_CONCURRENCY_LIMIT');
       const body = await readValidationJson(request, 32_768);
-      const profile = profiles.profiles.find(item => item.id === body?.caseId);
+      const profile = admitted.profileSuite.profiles.find(item => item.id === body?.caseId);
       requireValidation(profile && body.runId === admitted.runId && Object.keys(body).length === 3
         && !completed.has(profile.id) && !active && admitted.expiresAtMs > now()
         && validationHash(body.input) === validationHash(profile.input), 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
@@ -163,7 +170,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       const evidence = createLivePreviewEvidence({ sourceCommit: identity.sourceCommit,
         approvedSourceCommit: identity.sourceCommit, deploymentId: identity.deploymentId, moduleId: 'gaming', mode: LIVE_PREVIEW_MODE }, {
         caseId: profile.caseId, result: moduleResult.result, presentation: moduleResult.presentation, failureCode,
-        acceptanceProfile: profiles.acceptanceProfile,
+        acceptanceProfile: admitted.profileSuite.acceptanceProfile,
         usage: { ...after.usage, ...delta, limits: after.limits }, stages: {
           authorization: 'passed', budget: admitted.observation.budgetExhausted ? 'exhausted' : 'passed', ...stages,
           generation: failureCode === 'MODEL_TIMEOUT' ? 'timed_out'
@@ -222,9 +229,9 @@ export async function startValidationRuntime(environment = process.env) {
   const target = validateLiveValidationTarget(JSON.parse(environment.ARCANOS_LIVE_VALIDATION_TARGET_JSON ?? 'null'));
   const buildManifest = JSON.parse(readFileSync('/opt/validation/build.json', 'utf8'));
   const identity = validationIdentity({ target, role: 'runtime', environment, manifest: buildManifest, repositoryRoot: ROOT });
-  const profiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8'));
+  const profileSuites = LIVE_VALIDATION_PROFILE_NAMES.map(name => readLiveValidationProfiles(ROOT, name));
   const { runWithRequestAbortTimeout, getRequestRemainingMs } = await import('@arcanos/runtime');
-  const application = createValidationRuntimeApplication({ target, identity, profiles, buildManifest,
+  const application = createValidationRuntimeApplication({ target, identity, profileSuites, buildManifest,
     testToken: environment.ARCANOS_LIVE_VALIDATION_TEST_TOKEN, apiKey: environment.ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY,
     runRequest: runWithRequestAbortTimeout, getRemainingMs: getRequestRemainingMs });
   const port = environment.PORT ?? '8080';

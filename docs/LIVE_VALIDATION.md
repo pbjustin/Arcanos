@@ -95,6 +95,15 @@ future PR tests do not require rebinding. Never paste a secret into workflow
 inputs, chat, a command argument, Git, logs or artifacts. This facility does not
 recreate or copy production secrets, modify OAuth, or change installed plugins.
 
+For GitHub Actions, create a **Project Token** from ARCANOS Railway project
+**Settings → Tokens** and select only `live-validation`. In the GitHub repository's
+`live-pr-acceptance` environment, restrict deployment to the default branch and
+enter the token directly as the `RAILWAY_LIVE_VALIDATION_TOKEN` environment
+secret. Add the reviewed non-secret target separately as the
+`LIVE_VALIDATION_TARGET_JSON` environment variable. The controller checks the
+token's project and environment against that target before binding its own
+short-lived test bearer.
+
 ## Exact-SHA deployment and admission
 
 The [manual workflow](../.github/workflows/live-pr-acceptance.yml) and
@@ -158,7 +167,7 @@ in `bootstrap-attestation.json` using these exact fields:
 | --- | --- |
 | `version` | `arcanos-live-validation-operator-bootstrap/v1`. |
 | `repository` | `pbjustin/Arcanos`. |
-| `sourceCommit`, `prNumber`, `profile` | Exact candidate SHA, PR number and `gaming-guide`. |
+| `sourceCommit`, `prNumber`, `profile` | Exact candidate SHA, PR number and the reviewed suite name. |
 | `trustedControllerSha` | Exact clean reviewed controller checkout SHA. |
 | `treeSha` | Actual 40-hex candidate tree identity from `git rev-parse HEAD^{tree}`. |
 | `compiledSha256` | Actual 64-hex compiled-directory digest from `validationDirectoryHash('dist')` in the reviewed `scripts/live-validation-bootstrap.mjs`. |
@@ -379,9 +388,11 @@ admission, answer integrity and citation structure. A separate semantic or
 quality verdict is outside this profile.
 
 The hosted workflow takes its controller and profiles from the trusted default
-branch. A v1 trusted controller cannot admit a v2 candidate with a different
-profile hash. The v2 controller must first be available through the approved
-trusted execution path. Keep the existing exact-commit and credential gates.
+branch. The candidate must bundle the identical profile declared by the trusted
+controller. A candidate with only the Elite Dangerous suite cannot run the GTA IV
+suite. The runtime verifies the suite hash at admission and then checks each
+case's exact input. Both execution paths retain the exact-commit and credential
+gates.
 
 Quota state is local to the one run in one deployment process. The service has
 one replica and no automatic restart. A manual restart/redeployment can create
@@ -396,8 +407,13 @@ refund after cancellation. Railway build/hosting charges are separate.
 
 ## Gaming profiles and source protection
 
-The reusable [live profiles](../examples/live-validation/profiles.json) define
-both cases as data. [Fixture profiles](../examples/live-validation/fixture-profiles.json)
+The `gaming-guide` suite uses the [Elite Dangerous profiles](../examples/live-validation/profiles.json).
+Select `gaming-gta-iv` for the [GTA IV profiles](../examples/live-validation/gta-iv-profiles.json).
+Each suite defines one transient positive case and one incompatible-source
+control. The GTA IV case asks for the next step after leaving the boat and
+supplies the real GTA4.TV opening walkthrough. The control supplies the same
+immutable wrong-game Sekiro fixture used by the Elite Dangerous suite.
+[Fixture profiles](../examples/live-validation/fixture-profiles.json)
 provide controlled offline evidence; their example origin is not a deployed
 source host. Publisher reachability and usable coverage must be observed at
 execution. No local fixture or anonymous URL check proves live acceptance.
