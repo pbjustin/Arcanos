@@ -4,7 +4,6 @@ import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.
 import type { GamingFreshnessEvidence, GamingReviewedSourceRule } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingHybridDependencies } from '../src/services/gamingHybridKnowledge.js';
-import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceUnit } from '../src/shared/gaming/gamingEvidenceUnits.js';
 
 const fetch = jest.fn();
 const trinity = jest.fn();
@@ -52,9 +51,9 @@ function knowledge(items: GamingFreshnessEvidence[]): GamingStoredKnowledgeConte
   evidence: items.map((item, index) => ({ sourceId: item.id, revisionId: `platform-revision-${index}`, recordId: `platform-chunk-${index}`,
     recordType: 'guide', publicUrl: item.url, text: prose, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: item.fetchedAt } })) };
 }
-function serve(platform = 'PS5', instructions = prose) {
+function serve(platform = 'PS5') {
   fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' }, data: `<html><title>${game} controls guide</title><body><article>
-    <p>Game: ${game}. Edition: base game. Platforms: ${platform}.</p><p>${instructions}</p></article></body></html>` });
+    <p>Game: ${game}. Edition: base game. Platforms: ${platform}.</p><p>${prose}</p></article></body></html>` });
 }
 const environment = { ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false', ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]' };
 let previous: Record<string, string | undefined>;
@@ -80,60 +79,6 @@ afterEach(() => {
 });
 
 describe('question platform aliases preserve acquired applicability', () => {
-  it('reads a standalone source-wide restriction and keeps quoted restrictions local', () => {
-    const read = (text: string) => extractGamingFreshnessMetadata({ publicUrl: url, text }, { game }, now, rules);
-    expect(read(`${prose} This walkthrough applies only to Xbox 360.`).platforms).toEqual(['Xbox 360']);
-    expect(read(`${prose} "This walkthrough applies only to Xbox 360."`).platforms).toBeUndefined();
-    expect(read(`Platforms: PC. ${prose} This walkthrough applies only to Xbox 360.`).metadataConflict).toBe(true);
-  });
-
-  it.each(['"', '“'])('treats an incomplete %s quotation around a platform restriction as uncertain', quote => {
-    const result = extractGamingFreshnessMetadata({ publicUrl: url,
-      text: `${prose} ${quote}A reader wrote this. This walkthrough applies only to Xbox 360.` }, { game }, now, rules);
-    expect(result.platforms).toBeUndefined();
-    expect(result.metadataUnverified).toBe(true);
-  });
-
-  it('treats equivalent platform fields and sentences as one restriction', () => {
-    const result = extractGamingFreshnessMetadata({ publicUrl: url,
-      text: `Platforms: PC. ${prose} This walkthrough applies only to Steam.` }, { game }, now, rules);
-    expect(result.metadataConflict).not.toBe(true);
-    expect(result.platforms).toEqual(['PC']);
-  });
-
-  it('treats PS3 and PlayStation 3 declarations as one restriction and retains genuine conflicts', () => {
-    const read = (restrictedPlatform: string) => extractGamingFreshnessMetadata({ publicUrl: url,
-      text: `Platforms: PS3. ${prose} This walkthrough applies only to ${restrictedPlatform}.` }, { game }, now, rules);
-    expect(read('PlayStation 3')).toMatchObject({ platforms: ['PS3'] });
-    expect(read('PlayStation 3').metadataConflict).not.toBe(true);
-    expect(read('PlayStation 4').metadataConflict).toBe(true);
-    expect(read('PC').metadataConflict).toBe(true);
-  });
-
-  it('keeps a numbered gameplay instruction outside the platform field', () => {
-    const result = extractGamingFreshnessMetadata({ publicUrl: url,
-      text: `${prose} This walkthrough applies only to Xbox 360. 1) Drive to the marker.` }, { game }, now, rules);
-    expect(result.platforms).toEqual(['Xbox 360']);
-    expect(result.metadataUnverified).not.toBe(true);
-  });
-
-  it('keeps a global restriction in an intact paragraph metadata unit out of gameplay scope', () => {
-    const qualifier = 'This walkthrough applies only to Xbox 360.';
-    const unit: GamingEvidenceUnit = { id: 'source-metadata', kind: 'paragraph', text: `Game: ${game}; ${qualifier}`,
-      fields: [{ label: 'Game', value: game }], context: { scope: 'source-metadata', qualifiers: [qualifier] },
-      provenance: { sourceUrl: url, strategy: 'prose', representation: 'html_dom', locator: 'paragraph:1',
-        policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }, integrity: { status: 'complete', reasons: [] } };
-    const read = (evidenceUnit: GamingEvidenceUnit) => extractGamingFreshnessMetadata({ publicUrl: url,
-      text: `${prose}\n${evidenceUnit.text}`, evidenceUnits: [evidenceUnit] }, { game }, now, rules);
-    expect(read(unit).platforms).toEqual(['Xbox 360']);
-    expect(read({ ...unit, kind: 'table_row', fields: [{ label: 'Mechanic', value: game }] }).platforms).toBeUndefined();
-    expect(read({ ...unit, integrity: { status: 'partial', reasons: ['content_truncated'] } }))
-      .toMatchObject({ metadataUnverified: true });
-    expect(read({ ...unit, context: { scope: unit.context.scope } })).toMatchObject({ metadataUnverified: true });
-    expect(read({ ...unit, text: unit.text + ' This walkthrough applies only to PC.' }))
-      .toMatchObject({ metadataUnverified: true });
-  });
-
   it('matches the inferred PlayStation 5 request to an acquired PS5 guide', () => {
     const platform = resolveGamingQuestionScope(question).platform;
     expect(platform).toBe('PlayStation 5');
@@ -161,23 +106,6 @@ describe('question platform aliases preserve acquired applicability', () => {
       platform: resolveGamingQuestionScope(question).platform, candidates: [{ url }] }, actor);
     expect(result.accepted).toHaveLength(1);
     expect(result.accepted[0].freshness.platforms).toEqual(['PS5']);
-  });
-
-  it.each([['PS3', 'PlayStation 3'], ['PlayStation 3', 'PS3']])('matches an acquired %s guide to a %s request', async (acquired, requested) => {
-    serve(acquired, prose.replace(' on PS5', ''));
-    const prompt = `What are the controls on ${requested}?`;
-    expect(resolveGamingQuestionScope(prompt).platform).toBe('PlayStation 3');
-    const result = await evaluateGamingHybridCandidates({ game, prompt, mode: 'guide', protocolVersion: 'gaming-hybrid-v2',
-      platform: resolveGamingQuestionScope(prompt).platform, candidates: [{ url }] }, actor);
-    expect(result.accepted.map(candidate => candidate.freshness.platforms)).toEqual([[acquired]]);
-  });
-
-  it('keeps an acquired PS4 restriction incompatible with a PS3 request', async () => {
-    serve('PS4', prose.replace(' on PS5', ''));
-    const prompt = 'What are the controls on PS3?';
-    const result = await evaluateGamingHybridCandidates({ game, prompt, mode: 'guide', protocolVersion: 'gaming-hybrid-v2',
-      platform: resolveGamingQuestionScope(prompt).platform, candidates: [{ url }] }, actor);
-    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] }]);
   });
 
   it('reaches presented v2 generation after acquiring a guide with the same platform alias', async () => {

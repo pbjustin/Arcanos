@@ -83,7 +83,7 @@ function read(values: Record<string, unknown>, key: string): string | undefined 
 }
 
 const QUESTION_PLATFORMS: Readonly<Record<string, string>> = {
-  pc: 'PC', 'playstation 3': 'PlayStation 3', ps3: 'PlayStation 3', 'playstation 5': 'PlayStation 5', ps5: 'PlayStation 5'
+  pc: 'PC', 'playstation 5': 'PlayStation 5', ps5: 'PlayStation 5'
 };
 const QUESTION_REGIONS: Readonly<Record<string, string>> = {
   europe: 'Europe', 'north america': 'North America', 'south america': 'South America',

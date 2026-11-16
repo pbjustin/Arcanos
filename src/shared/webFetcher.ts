@@ -1,6 +1,5 @@
 import { GAMING_PRIMARY_CONTENT_SELECTORS, GAMING_PRIMARY_CONTENT_SELECTOR_LIMIT as MAX_EXTRACTION_SELECTORS,
-  GAMING_ARTICLE_REGION_SELECTOR, preservePrimaryContentSidebarLayouts, readGamingArticleOwner, readGamingArticleScope,
-  type GamingArticleScope } from './gaming/gamingDocumentTextNormalization.js';
+  preservePrimaryContentSidebarLayouts } from './gaming/gamingDocumentTextNormalization.js';
 import axios from 'axios';
 import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
@@ -387,9 +386,6 @@ export interface FetchAndCleanOptions {
   primaryContentSelectors?: readonly string[];
   /** Gaming keeps an acquired enclosing article/main subject when selecting its inner prose body. */
   preservePrimaryContentHeading?: boolean;
-  /** Server-owned original scope witness when extraction receives a transformed HTML projection. */
-  originalArticleScope?: GamingArticleScope | null;
-  originalArticleHeading?: string;
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
@@ -443,8 +439,6 @@ export interface FetchAndCleanExtractionMetrics {
   candidateCount?: number;
   documentTitle?: string;
   headingText?: string;
-  articleScope?: GamingArticleScope;
-  articleRestrictionsBound?: true;
 }
 
 function normalizeExtractedText(value: string): string {
@@ -821,10 +815,6 @@ export function extractFetchAndCleanDocument(
       try { return Boolean($(element).closest(selector).length); } catch { return false; }
     });
   };
-  const articleOwner = options.preservePrimaryContentHeading && (options.originalArticleScope || options.originalArticleHeading)
-    ? readGamingArticleOwner($, headingDenied) : undefined;
-  const scopedArticle = articleOwner && options.originalArticleScope
-    ? readGamingArticleScope($, headingDenied, articleOwner) : undefined;
   for (const selector of removeSelectors) {
     try {
       if (options.preservePrimaryContentHeading && selector === 'header') {
@@ -982,27 +972,6 @@ export function extractFetchAndCleanDocument(
   const cleanedText = options.retainFullSelectedText ? selectedText.slice(0, boundedMaxChars) : selectedText;
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
-  const originalScope = options.originalArticleScope;
-  const selectedArticle = articleOwner && selectedCandidate.element && cleanedText === selectedText
-    && $(selectedCandidate.element).closest(GAMING_ARTICLE_REGION_SELECTOR).get(0) === articleOwner.article;
-  const articleRestrictionsBound = selectedArticle && articleOwner.heading === options.originalArticleHeading;
-  const originalContinuation = originalScope?.continuation;
-  const localContinuation = scopedArticle?.metadata.continuation;
-  // A selected sibling or quotation can repeat identical prose. Require
-  // the selected subtree to contain each actual authored scope witness.
-  const owns = (anchor?: cheerio.Element) => anchor && selectedCandidate.element
-    && (selectedCandidate.element === anchor || contains(selectedCandidate.element, anchor));
-  const ownsLead = owns(scopedArticle?.leadAnchor);
-  const ownsContinuation = owns(scopedArticle?.continuationAnchor?.parent);
-  const articleScope = selectedArticle && scopedArticle && originalScope
-    && scopedArticle.metadata.label === originalScope.label && scopedArticle.metadata.heading === originalScope.heading
-    ? { label: originalScope.label, heading: originalScope.heading,
-        ...(ownsLead && originalScope.lead && scopedArticle.metadata.lead === originalScope.lead
-          ? { lead: originalScope.lead,
-              ...(ownsContinuation && originalContinuation && localContinuation?.heading === originalContinuation.heading
-                && localContinuation.text === originalContinuation.text ? { continuation: originalContinuation } : {}) }
-          : {}) }
-    : undefined;
 
   options.onExtraction?.({
     strategy: extractionStrategy,
@@ -1017,9 +986,7 @@ export function extractFetchAndCleanDocument(
     linkDensity: roundUnitMetric(selectedCandidate.linkDensity),
     candidateCount: candidates.length,
     ...(documentTitle ? { documentTitle } : {}),
-    ...(headingText ? { headingText } : {}),
-    ...(articleScope ? { articleScope } : {}),
-    ...(articleRestrictionsBound ? { articleRestrictionsBound: true } : {})
+    ...(headingText ? { headingText } : {})
   });
 
   const seenLinks = new Set<string>();

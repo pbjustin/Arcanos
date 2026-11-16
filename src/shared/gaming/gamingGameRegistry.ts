@@ -46,40 +46,11 @@ export function validateGamingGameRegistry(value: unknown): GamingGameRegistry {
   const aliases = new Map<string, string>();
   for (const entry of value.games) {
     if (!record(entry)) fail();
-    allowedKeys(entry, ['id', 'name', 'aliases', 'caseSensitiveAliases', 'related', 'editions', 'platforms', 'defaultEdition', 'provenance', 'guideTopics']);
+    allowedKeys(entry, ['id', 'name', 'aliases', 'caseSensitiveAliases', 'related', 'editions', 'platforms', 'defaultEdition', 'provenance']);
     if (!literal(entry.id, 80) || !/^[a-z][a-z0-9-]*$/u.test(entry.id) || ids.has(entry.id)
       || !literal(entry.name) || !literals(entry.aliases) || !literals(entry.platforms, 8)
       || entry.caseSensitiveAliases !== undefined && (!literals(entry.caseSensitiveAliases)
         || !entry.caseSensitiveAliases.every(alias => (entry.aliases as string[]).includes(alias)))) fail();
-    if (entry.guideTopics !== undefined) {
-      if (!Array.isArray(entry.guideTopics) || entry.guideTopics.length > 8) fail();
-      const headings = new Set<string>();
-      for (const topic of entry.guideTopics) {
-        if (!record(topic)) fail();
-        allowedKeys(topic, ['heading', 'entities', 'actions']);
-        if (!Array.isArray(topic.actions) || !topic.actions.length || topic.actions.length > 4) fail();
-        for (const action of topic.actions) {
-          if (!record(action)) fail();
-          allowedKeys(action, ['verbs', 'objects', 'actors']);
-          for (const alternatives of [action.verbs, action.objects]) {
-            if (!literals(alternatives, 16) || !alternatives.length) fail();
-            const identities = alternatives.map(normalizeGamingRegistryIdentity);
-            if (identities.some(identity => !identity) || new Set(identities).size !== identities.length) fail();
-          }
-          if (action.actors !== undefined) {
-            if (!literals(action.actors, 8) || !action.actors.length) fail();
-            const identities = action.actors.map(normalizeGamingRegistryIdentity);
-            if (identities.some(identity => !identity) || new Set(identities).size !== identities.length) fail();
-          }
-        }
-        if (!literal(topic.heading, 80) || !literals(topic.entities, 4) || topic.entities.length < 2) fail();
-        const heading = normalizeGamingRegistryIdentity(topic.heading);
-        const entities = topic.entities.map(normalizeGamingRegistryIdentity);
-        if (!heading || headings.has(heading) || entities.some(entity => !entity)
-          || new Set(entities).size !== entities.length) fail();
-        headings.add(heading);
-      }
-    }
     ids.add(entry.id);
     for (const name of [entry.id, entry.name, ...entry.aliases]) {
       const normalized = normalizeGamingRegistryIdentity(name);

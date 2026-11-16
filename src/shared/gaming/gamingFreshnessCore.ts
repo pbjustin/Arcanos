@@ -1,7 +1,7 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
-import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
+import { gamingPlatformEvidenceMatchesRequest, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, gamingRequestTargetsExtraContent, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
   gamingApplicabilityAssertionText, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
@@ -156,37 +156,9 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   const acquiredUnits = acquiredDocument === document ? evidenceUnits
     : readGamingEvidenceUnits(acquiredDocument.evidenceUnits, undefined, acquiredDocument.text);
   let proseText = acquiredDocument.text;
-  let incompletePlatformScope = false;
   // Shared label prefixes must not leave gameplay record fragments in prose.
-  for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) {
-    // Preserve complete source-wide qualifiers attached to paragraph metadata.
-    // Gameplay record cells and their qualifiers remain local to those rows.
-    const metadataParagraph = unit.kind === 'paragraph' && isGamingDocumentMetadataUnit(unit);
-    const qualifiers = metadataParagraph
-      ? (unit.context.qualifiers ?? []).filter(value => gamingProsePlatformDeclarationPattern().test(value)) : [];
-    const intact = unit.integrity.status === 'complete' && unit.integrity.reasons.length === 0;
-    const retained = intact && qualifiers.length ? '\n' + qualifiers.join('\n') + '\n' : '';
-    if (metadataParagraph) {
-      const retainedPlatforms = new Set(Array.from(retained.matchAll(gamingProsePlatformDeclarationPattern()),
-        match => normalizeGamingPlatformIdentity(match[1])));
-      incompletePlatformScope ||= Array.from(unit.text.matchAll(gamingProsePlatformDeclarationPattern()))
-        .some(match => !retainedPlatforms.has(normalizeGamingPlatformIdentity(match[1])));
-    }
-    proseText = proseText.replace(unit.text, () => retained);
-  }
+  for (const unit of [...acquiredUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
   const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
-  // Balanced quotations were masked above. A remaining opener before a
-  // prose restriction leaves its attribution uncertain.
-  let firstUnpairedQuote: number | undefined;
-  applicabilityScope.text = applicabilityScope.text.replace(gamingProsePlatformDeclarationPattern(),
-    (sentence: string, platform: string, index: number, source: string) => {
-      firstUnpairedQuote ??= source.search(/["“‘`]|(?<![\p{L}\p{N}])'(?=\S)/u);
-      if (firstUnpairedQuote >= 0 && firstUnpairedQuote < index) {
-        applicabilityScope.complete = false;
-        return sentence;
-      }
-      return `Platforms: ${platform}\n`.padStart(sentence.length, ' ');
-    });
   const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
@@ -209,7 +181,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ? selectGamingEditionScopedEvidence(document, { game: context.game, edition: inspectionEdition }) : undefined;
   // Local edition proof must not hide global restrictions outside the metadata
   // parser's bounds. Such labels remain uncertainty, never additional proof.
-  let invalidMetadata = !applicabilityScope.complete || incompletePlatformScope || acquiredDocument.metadata?.applicabilityUnverified === true;
+  let invalidMetadata = !applicabilityScope.complete || acquiredDocument.metadata?.applicabilityUnverified === true;
   if (editionScoped?.status === 'verified') {
     // Inspect bounded local values rather than repeatedly slicing the remaining
     // document. The full negative field scan below retains actual conflicts.
@@ -253,9 +225,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     if (claims.some(value => value.length === 0 || value.length > max)) invalidMetadata = true;
     const values = [...new Set(claims.filter(value => value.length > 0 && value.length <= max)
       .map(value => name === 'Edition' && normalizeGamingEditionIdentity(value) === 'base-game' ? 'base-game' : value))];
-    const identities = name === 'Platforms?' ? new Set(values.map(value => fieldValue('platform', value))) : new Set(values);
-    if (identities.size > 1) conflict = true;
-    return identities.size === 1 ? values[0] : undefined;
+    if (values.length > 1) conflict = true;
+    return values.length === 1 ? values[0] : undefined;
   };
   // Inspect every supported global field for contradictions without acquiring
   // late positive proof. Complete local gameplay records were removed above;
@@ -486,13 +457,11 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   if (historical && (!input.requestedVersion || /\bas\s+of\s+\d{4}-\d{2}-\d{2}\b/iu.test(input.question)))
     return result('unverified', ['HISTORICAL_AS_OF_UNSUPPORTED']);
   const reasons = new Set<string>();
-  const extraContentRequested = gamingRequestTargetsExtraContent(input);
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
     if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
-    if (!input.edition && (item.edition || extraContentRequested)
-      && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
+    if (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
     if (input.platform && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform)) { reasons.add('PLATFORM_MISMATCH'); return false; }
     if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms)) { reasons.add('PLATFORM_REQUIRED'); return false; }
     if (input.region && item.regions?.length && !item.regions.some(region => same(region, input.region) || same(region, 'all'))) { reasons.add('REGION_MISMATCH'); return false; }

@@ -8,9 +8,9 @@ import { buildGamingDocumentSearchText, classifyGamingDocumentQuality } from './
 import { assessGamingClearSource, gamingClearIntactSourceText } from './gamingClearSource.js';
 import { assessGamingClearEvidence } from './gamingClearEvidence.js';
 import { gamingClearHash } from './gamingClearPolicy.js';
-import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS,
+import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS, GAMING_FRESHNESS_POLICY_VERSION,
   type GamingFreshnessEvidence, type GamingReviewedSourceRule } from './gamingFreshnessCore.js';
-import { formatStoredGamingEvidence, selectStoredGamingEvidence, GAMING_STORED_APPLICABILITY_VERSION,
+import { formatStoredGamingEvidence, selectStoredGamingEvidence,
   type GamingStoredEvidenceRecord, type GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 
 export const GAMING_STRUCTURED_EVIDENCE_PREVIEW_VERSION = 'gaming-structured-evidence/v1';
@@ -93,7 +93,7 @@ async function requireStoredLifecycle(doc: ResolvedGamingDocument, input = INPUT
     normalized: { text: chunk.text, evidenceUnits: chunk.evidenceUnits,
       chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks, startChar: chunk.startChar, endChar: chunk.endChar } },
     provenance: { resolverId: 'generic-web', resolverVersion: 'gaming-document-v2', resolutionStrategy: 'article',
-      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game: applicability.game,
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
         ...(applicability.edition ? { edition: applicability.edition } : {}),
         ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
         ...(applicability.regions?.length ? { regions: applicability.regions } : {}),

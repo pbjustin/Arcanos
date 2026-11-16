@@ -7,15 +7,14 @@ import { gamingEditionEvidenceMatchesRequest, normalizeGamingEvidenceGameIdentit
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { extractGamingFreshnessMetadata, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
-import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern } from './gamingPlatformIdentity.js';
+import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingGameScopedDocument,
   selectGamingSourceEditionScopedEvidence, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { gamingSourceHasAuthorityRestriction } from './gamingSourceAuthority.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
-export const GAMING_STORED_APPLICABILITY_VERSION = 'gaming-stored-applicability/v2';
 // Six gameplay and three currentness artifacts, each with at most 500 indexed
 // chunks. This inspection bound is separate from the top-20 combination search.
 const MAX_GAMING_EVIDENCE_POOL_CANDIDATES = (GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
@@ -36,8 +35,6 @@ export interface GamingStoredEvidenceLimits {
 export interface GamingStoredEvidenceRecord {
   /** Validated and content-bound by the backend service before projection. */
   clearSourceAssessment?: GamingClearAssessment;
-  /** Set only by the backend after validating the current acquired artifact. */
-  transientSourceEvidence?: true;
   /** Backend catalog identity when available; legacy pure inputs may omit it. */
   gameName?: string;
   recordId: string;
@@ -225,7 +222,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && !Array.isArray(provenance.acquiredApplicability) ? provenance.acquiredApplicability as Record<string, unknown> : undefined;
   const validScopeList = (value: unknown) => value === undefined || Array.isArray(value) && value.length <= 8
     && value.every(item => typeof item === 'string' && item.trim().length > 0 && item.length <= 80);
-  const acquiredApplicability = acquiredMetadata?.extractorVersion === GAMING_STORED_APPLICABILITY_VERSION
+  const acquiredApplicability = acquiredMetadata?.extractorVersion === GAMING_FRESHNESS_POLICY_VERSION
     && Object.keys(acquiredMetadata).every(key => ['extractorVersion', 'contentHash', 'game', 'edition', 'platforms',
       'regions', 'metadataConflict', 'metadataUnverified'].includes(key))
     && typeof record.contentHash === 'string' && /^[a-f0-9]{64}$/u.test(record.contentHash) && acquiredMetadata.contentHash === record.contentHash
@@ -235,8 +232,8 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && [acquiredMetadata.metadataConflict, acquiredMetadata.metadataUnverified].every(value => value === undefined || typeof value === 'boolean')
     && validScopeList(acquiredMetadata.platforms) && validScopeList(acquiredMetadata.regions) ? acquiredMetadata : undefined;
   const existingHybridScope = freshnessMetadata && typeof freshnessMetadata.game === 'string'
-    && (record.transientSourceEvidence === true
-      || acquiredApplicability && acquiredApplicability.metadataUnverified !== true)
+    && (provenance.acquiredApplicability === undefined || acquiredApplicability !== undefined)
+    && acquiredApplicability?.metadataUnverified !== true
     && freshnessMetadata.game.trim().length > 0 && freshnessMetadata.game.length <= 160
     && typeof freshnessMetadata.id === 'string' && freshnessMetadata.id.length > 0 && freshnessMetadata.id.length <= 2_048
     && freshnessMetadata.policyVersion === GAMING_SOURCE_POLICY_VERSION
@@ -266,8 +263,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   // An excluded structural record never falls back as flattened source prose.
   if (normalized.evidenceUnits !== undefined && !evidenceUnits.length) return null;
   if (acquiredDocument.evidenceUnits.some(unit => unit.fields.some(field => /^(?:platforms?|regions?)$/iu
-    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(acquiredDocument.text)
-    || gamingProsePlatformDeclarationPattern().test(acquiredDocument.text)) {
+    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(acquiredDocument.text)) {
     // Inspect acquired restrictions with no publisher/currentness authority and
     // the original fetch time. Preserve global metadata outside selected rows.
     const applicability = extractGamingFreshnessMetadata(acquiredDocument,
@@ -288,7 +284,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const query = terms.join(' ');
   const excerptLimit = Math.min(1_200, limits.chunkChars);
   let prose = structuralText ? '' : selectGamingDocumentExcerpt(safeText, query, excerptLimit);
-  if (!structuralText && input.mode === 'guide') prose = preserveGamingSelectionAdjacency(prose, body, input.game);
+  if (!structuralText && input.mode === 'guide') prose = preserveGamingSelectionAdjacency(prose, body);
   if (!structuralText && input.mode === 'guide' && input.requireRequestCoverage) {
     const requirements = buildGamingRequestRequirements(input);
     for (const requirement of requirements) {
@@ -453,13 +449,6 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   const pool = [...unique.values()];
   if (requiredIds.some(id => !pool.some(candidate => candidate.source.sourceId === id))) return [];
   const requirements = buildGamingRequestRequirements(input);
-  // A bare checkpoint can match different routes across the eligible pool.
-  // Choosing one candidate first would hide the need for player clarification.
-  if (requirements.some(requirement => requirement.disembarkation)) {
-    const sourcesByIdentity = new Map(pool.map(({ source }) => [`${source.sourceId}\u0000${source.url}`, source]));
-    if (assessCoverage(input, { context: '', sources: [...sourcesByIdentity.values()],
-      evidence: pool.map(candidate => candidate.evidence) }).gapAssessmentStatus === 'not_assessed') return [];
-  }
   // Clarification gates depend on the request, so no subset can bypass them.
   const requestAssessable = assessCoverage(input, { context: '', sources: [] }).gapAssessmentStatus !== 'not_assessed';
   const focusTerms = buildGamingRetrievalTerms(input).focusTerms;
