@@ -3,6 +3,8 @@ import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/s
 import { evaluateGamingFreshness, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { selectGamingCoverageEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
+import { preserveGamingSelectionAdjacency } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+
 const now = new Date('2026-09-09T12:00:00Z');
 const staticInput = { game: 'The Legend of Zelda: Ocarina of Time', mode: 'guide' as const, prompt: 'How do I open the copper gate?' };
 function knowledge(game: string, passages: string[], overrides: Partial<GamingStoredKnowledgeContext> = {}): GamingStoredKnowledgeContext {
@@ -124,6 +126,34 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     const data = knowledge(disembarkationRequest.game, [passage]);
     expect(assessGamingRequestCoverage(disembarkationRequest, data).coverageSatisfied).toBe(false);
     expect(assessGamingClearEvidence(disembarkationRequest, data, { now }).decision).not.toBe('accept');
+  });
+
+  test('keeps a registered narrative checkpoint and its explicit player handoff in one passage', () => {
+    const input = { ...disembarkationRequest, game: 'Grand Theft Auto IV' };
+    const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
+    const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
+    expect(preserveGamingSelectionAdjacency(`${checkpoint} ${driving}`, `${checkpoint}\n\n${driving}`, input.game)).toBe('');
+    const intact = knowledge(input.game, [`${checkpoint} ${driving}`]);
+    expect(assessGamingRequestCoverage(input, intact).coverageSatisfied).toBe(true);
+    expect(assessGamingClearEvidence(input, intact, { now }).decision).toBe('accept');
+    const transfer = "He's glad to see you. Roman's tired, so he's unable to drive, so it's over to you.";
+    expect(assessGamingRequestCoverage(input, knowledge(input.game, [`${checkpoint} ${transfer} ${driving}`]))
+      .coverageSatisfied).toBe(true);
+    for (const unbound of [
+      [checkpoint, driving],
+      [`${checkpoint}\n\n${driving}`],
+      [`${checkpoint.replace('Niko and his fellow passengers', 'A sailor')} ${driving}`],
+      [`${checkpoint.replace('the cargo ship', 'a platform overlooking the ship')} ${driving}`],
+      [`${checkpoint.replace('to collect you', 'to collect his friend')} ${driving}`],
+      [`${checkpoint} The next mission starts later. ${driving}`],
+      [`${checkpoint} Later. ${driving}`],
+      [`${checkpoint} This walkthrough describes a later part of the game. ${driving}`],
+      [`${checkpoint} Roman has no car. ${driving}`],
+      [`This example is hypothetical. ${checkpoint} ${driving}`],
+      [`${checkpoint} ${driving.replace('drive him', 'drive her')}`],
+      [`${checkpoint} ${driving.replace('need to drive', 'probably be asked to drive')}`],
+      [`${checkpoint} Once you are in the car, read the linked walkthrough for the next steps.`]
+    ]) expect(assessGamingRequestCoverage(input, knowledge(input.game, unbound)).coverageSatisfied).toBe(false);
   });
 
   test('cannot use passage selection to choose an unspecified disembarkation checkpoint', () => {

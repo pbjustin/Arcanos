@@ -27,7 +27,7 @@ import {
 } from "@services/gamingArchiveResources.js";
 import { filterGamingDocumentInstructions, gamingDocumentFetchOptions } from "@services/gamingDocumentExtraction.js";
 import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjectionCore.js";
-import { normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { gamingArticleContinuationIsRetained, normalizeGamingDocumentInstructionCharacters } from '@shared/gaming/gamingDocumentTextNormalization.js';
 import { gamingApplicabilityAssertionContext, gamingApplicabilityAssertionText } from '@shared/gaming/gamingGameRegistry.js';
 import { hasStandaloneGamingArticleAssertion } from '@shared/gaming/gamingGameDeclaration.js';
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
@@ -393,7 +393,8 @@ export async function resolveGamingDocument(
     };
     const { articleScope, ...ordinaryExtraction } = effectiveExtraction;
     const metadataInstructionFiltered = [effectiveExtraction.documentTitle, effectiveExtraction.headingText,
-      articleScope?.label, articleScope?.heading, articleScope?.lead]
+      articleScope?.label, articleScope?.heading, articleScope?.lead,
+      articleScope?.continuation?.heading, articleScope?.continuation?.text]
       .some(value => value !== undefined && filterGamingDocumentInstructions(value)
         !== normalizeGamingDocumentInstructionCharacters(value).replace(/\s+/gu, ' ').trim());
     // Specialized resolvers can return selected prose shorter than their fully
@@ -430,7 +431,9 @@ export async function resolveGamingDocument(
     // acquisition or selected-text truncation invalidates the original article witness.
     const completeArticle = acquired.finalUrl && acquired.structure && !instructionFiltered && !sourceUseRestricted && !documentTruncated;
     const retainedArticleScope = completeArticle && articleScope
-      ? { label: articleScope.label, heading: articleScope.heading, ...(leadRetained ? { lead: articleScope.lead } : {}) }
+      ? { label: articleScope.label, heading: articleScope.heading,
+          ...(leadRetained ? { lead: articleScope.lead,
+            ...(gamingArticleContinuationIsRetained(articleScope, projection.text) ? { continuation: articleScope.continuation } : {}) } : {}) }
       : undefined;
     const articleAssertions = completeArticle && articleRestrictionsBound ? acquired.structure?.articleScopeAssertions : undefined;
     const selectedScope = articleAssertions?.length

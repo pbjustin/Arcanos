@@ -284,9 +284,9 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   let ambiguousDisembarkation = false;
   const support = requirements.map(requirement => {
     const handoffs = new Set<string>();
-    const supportsRequirement = (claims: string) => {
+    const supportsRequirement = (claims: string, intactProse = '') => {
       if (!requirement.disembarkation) return gamingRequirementSupported(claims, requirement);
-      const matching = gamingDisembarkationHandoffs(claims);
+      const matching = gamingDisembarkationHandoffs(claims, requirement.disembarkation, intactProse);
       for (const handoff of matching) {
         if (handoffs.size >= 2) break;
         handoffs.add(handoff);
@@ -299,7 +299,7 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
       const claims = chunkClaimText(chunk, knowledge.sources.find(source => source.sourceId === chunk.sourceId), input.game);
       const eligibleClaims = filterProgressionTopicClaims
         ? gamingClearGuideTopicCoverageText(claims, input.game) : claims;
-      if (!chunk.evidenceUnits?.length) return supportsRequirement(eligibleClaims) ? [chunk] : [];
+      if (!chunk.evidenceUnits?.length) return supportsRequirement(eligibleClaims, chunk.text) ? [chunk] : [];
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         // Do not let requirement-level lexical checks re-credit the original
         // row after checkpoint claim filtering removed its registered action.

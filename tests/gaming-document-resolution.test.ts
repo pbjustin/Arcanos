@@ -22,7 +22,7 @@ const { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDoc
 const { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } = await import('../src/services/gamingSourceDiscovery.js');
 const { GAMING_BUILD_RESOURCE_HARD_LIMITS } = await import('../src/services/gamingBuildResources.js');
 const { GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
-const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { assessGamingClearSourceIdentity, gamingClearScopedArticleText } = await import('../src/shared/gaming/gamingClearSource.js');
 const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 
 function response(data: string, contentType: string) {
@@ -145,6 +145,85 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.metadata.articleScope?.lead).toBe(openingLead);
     expect(document.text).toContain(openingLead);
     expect(document.metadata.articleScope?.lead).not.toContain('Later mission');
+  });
+
+  const routeLead = 'After the scene where Niko and the other passengers climb off the ship in Liberty City, Roman arrives to meet you. '
+    + 'Once you are in his car, drive him back to his \u2018flat\u2019.';
+  const routeHeading = 'To The Flat';
+  const routeText = 'Follow the amber marker on your radar. This is your GPS indicator for the turn ahead.';
+  const routeSection = '<h2>' + routeHeading + '</h2>' + routeText
+    + ' Drive down the side street after the bridge.';
+  const routeArticle = (adjacent = routeSection, outside = '') => '<article>' + openingHeader
+    + '<div class="guide-content"><h2>Introduction</h2>' + routeLead + '<br>' + adjacent
+    + '<h2>Later Mission</h2><p>Walk to the next checkpoint to inspect the route.</p></div>' + outside + '</article>';
+
+  it.each(['<br>', ''])('retains only the immediate same-container route named by the authored opening (%s separator)', async separator => {
+    mockAxiosGet.mockResolvedValue(response(routeArticle().replace('<br>', separator), 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.metadata.articleScope?.continuation).toEqual({ heading: routeHeading, text: routeText });
+    expect(document.extraction.articleScope).toEqual(document.metadata.articleScope);
+    expect(isResolvedGamingDocumentIdentityVerified(document, openingUrl)).toBe(true);
+    const forged = { ...document, metadata: { ...document.metadata, articleScope: {
+      label: openingLabel, heading: openingHeading, lead: routeLead,
+      continuation: { heading: routeHeading, text: 'Follow the green route.' }
+    } } };
+    expect(isResolvedGamingDocumentIdentityVerified(forged, openingUrl)).toBe(false);
+    expect(gamingClearScopedArticleText(document, document.text, 'Grand Theft Auto IV'))
+      .toBe(openingHeading + '\n\n' + routeLead.normalize('NFKC') + '\n' + routeHeading + '\n' + routeText);
+    expect(gamingClearScopedArticleText(document, document.text.replace(routeText, ''), 'Grand Theft Auto IV'))
+      .not.toContain(routeHeading);
+  });
+
+  it.each([
+    ['a hidden route section', routeSection.replace('<h2>', '<h2 hidden>'), ''],
+    ['a destination mismatch', routeSection.replace(routeHeading, 'To The Garage'), ''],
+    ['a referenced rather than executable route instruction', routeSection.replace('the amber marker on your radar', 'the linked walkthrough'), ''],
+    ['an unrelated preceding section', '<h2>Later Mission</h2><p>Inspect the next checkpoint.</p>' + routeSection, ''],
+    ['an intervening non-heading boundary', '<div>Separate walkthrough information</div>' + routeSection, ''],
+    ['an article-owned aside', '', '<aside>' + routeSection + '</aside>'],
+    ['an unrelated nested region', '', '<section><article><h2>Different campaign</h2>' + routeSection + '</article></section>']
+  ])('does not retain the opening continuation from %s', async (_case, adjacent, outside) => {
+    mockAxiosGet.mockResolvedValue(response(routeArticle(adjacent, outside), 'text/html'));
+    expect((await resolveGamingDocument(openingUrl)).metadata.articleScope?.continuation).toBeUndefined();
+  });
+
+  it.each([
+    'Roman says the others drive to the flat.',
+    'If Roman asks, drive back to the flat.',
+    'Once you are in his car, choose whether to drive him back to the flat.'
+  ])('does not extend the opening with a reported, conditional or undecided destination: %s', async statement => {
+    const html = routeArticle().replace(/Once you are in his car[^.]+\./u, statement);
+    mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
+    expect((await resolveGamingDocument(openingUrl)).metadata.articleScope?.continuation).toBeUndefined();
+  });
+
+  it('does not bind a quoted copy in the preferred body to an omitted route from its sibling', async () => {
+    const copied = [routeLead, routeHeading, routeText].join(' ');
+    const preferred = '<div id="article-body"><blockquote>' + copied + '</blockquote>'
+      + '<p>Independent guide context covers camera settings and walking controls. Practice adjusting the view.</p></div>';
+    mockAxiosGet.mockResolvedValue(response(routeArticle(routeSection, preferred), 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.extraction.selectedContainer).toBe('#article-body');
+    expect(document.text).toContain(copied);
+    expect(document.metadata.articleScope?.lead).toBeUndefined();
+    expect(document.metadata.articleScope?.continuation).toBeUndefined();
+  });
+
+  it('does not retain continuation authority from a truncated selected document', async () => {
+    mockAxiosGet.mockResolvedValue(response(routeArticle(), 'text/html'));
+    const document = await resolveGamingDocument(openingUrl, 190);
+    expect(document.metrics.truncated).toBe(true);
+    expect(document.metadata.articleScope?.continuation).toBeUndefined();
+  });
+
+  it('keeps a whole-article foreign scope contradiction even with a retained continuation', async () => {
+    const conflict = '<aside><p>This guide covers Grand Theft Auto V Training Edition.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response(routeArticle(routeSection, conflict), 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    const game = 'Grand Theft Auto IV';
+    expect(assessGamingClearSourceIdentity(document, { game, mode: 'guide', prompt: 'What should I do next?' },
+      assessGamingSourcePolicy(document.publicUrl, game), true))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
 
   const guideByline = '<div class="mb-3">Published <time datetime="2025-06-06">June 06, 2025 12:01 PM</time> by '

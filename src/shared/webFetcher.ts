@@ -986,10 +986,22 @@ export function extractFetchAndCleanDocument(
   const selectedArticle = articleOwner && selectedCandidate.element && cleanedText === selectedText
     && $(selectedCandidate.element).closest(GAMING_ARTICLE_REGION_SELECTOR).get(0) === articleOwner.article;
   const articleRestrictionsBound = selectedArticle && articleOwner.heading === options.originalArticleHeading;
+  const originalContinuation = originalScope?.continuation;
+  const localContinuation = scopedArticle?.metadata.continuation;
+  // A selected sibling or quotation can repeat identical prose. Require
+  // the selected subtree to contain each actual authored scope witness.
+  const owns = (anchor?: cheerio.Element) => anchor && selectedCandidate.element
+    && (selectedCandidate.element === anchor || contains(selectedCandidate.element, anchor));
+  const ownsLead = owns(scopedArticle?.leadAnchor);
+  const ownsContinuation = owns(scopedArticle?.continuationAnchor?.parent);
   const articleScope = selectedArticle && scopedArticle && originalScope
     && scopedArticle.metadata.label === originalScope.label && scopedArticle.metadata.heading === originalScope.heading
     ? { label: originalScope.label, heading: originalScope.heading,
-        ...(originalScope.lead && scopedArticle.metadata.lead === originalScope.lead ? { lead: originalScope.lead } : {}) }
+        ...(ownsLead && originalScope.lead && scopedArticle.metadata.lead === originalScope.lead
+          ? { lead: originalScope.lead,
+              ...(ownsContinuation && originalContinuation && localContinuation?.heading === originalContinuation.heading
+                && localContinuation.text === originalContinuation.text ? { continuation: originalContinuation } : {}) }
+          : {}) }
     : undefined;
 
   options.onExtraction?.({

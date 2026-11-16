@@ -878,6 +878,27 @@ describe('GTA IV opening mission controls', () => {
     expect(sdk).toHaveBeenCalledTimes(3);
   });
 
+  it('reaches a cited next step when the owned opening hands off to an adjoining route section', async () => {
+    const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
+    const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
+    const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.';
+    const article = { ...storyArticle, body: '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+      + '<div class="walkthrough"><h2>Introduction</h2>' + checkpoint + ' ' + driving + '<br>'
+      + '<h2>To The Apartment</h2>' + route
+      + '<h2>Later in the mission</h2><p>Keep the LATER_MISSION_SENTINEL out of the player excerpt.</p></div>' };
+    scenario = storyScenario('Just got off the boat.', article);
+    scenario.claims = [{ url: article.url, draft: 'Drive Roman to his apartment by following the yellow GPS marker.',
+      answerProbe: /Drive Roman to his apartment.*yellow GPS marker/iu,
+      support: [/step off the cargo ship/iu, /drive him back to his apartment/iu, /yellow marker on the radar/iu] }];
+    const result = await submit();
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url: article.url }] } });
+    expect(finalEvidence.some(chunk => chunk.url === article.url
+      && scenario.claims[0].support.every(probe => probe.test(chunk.text)))).toBe(true);
+    expect(finalEvidence.map(chunk => chunk.text).join(' ')).not.toContain('LATER_MISSION_SENTINEL');
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  });
+
   it('keeps a later GTA V walkthrough heading and its actions out of GTA IV evidence and the answer', async () => {
     const mixedArticle = { ...storyArticle, body: storyArticle.body
       + '<h2>GTA V Walkthrough</h2><p>Drive Franklin to the Vinewood sign along the orange route. OTHER_GAME_ACTION_SENTINEL</p>' };

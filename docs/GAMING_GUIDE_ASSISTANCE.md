@@ -156,9 +156,11 @@ must be supported by the same claim. Navigation, image descriptions, neighboring
 scattered names, and comparisons cannot supply this proof. In Hybrid v2 the
 opening claim attests to its own passage. A complete later statement can also
 contribute when it independently names the requested game and passes the same
-applicability, coverage, and provenance checks. The whole acquired article
-still goes through contradiction and applicability checks. These passage-level
-checks never grant storage permission or publisher authority.
+applicability, coverage, and provenance checks. The immediate sibling route
+section can contribute if it belongs to the same acquired article region and
+continues the exact destination named in the opening instruction. The whole
+acquired article still goes through contradiction and applicability checks.
+These passage-level checks never grant storage permission or publisher authority.
 
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted

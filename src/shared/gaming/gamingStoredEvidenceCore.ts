@@ -288,7 +288,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const query = terms.join(' ');
   const excerptLimit = Math.min(1_200, limits.chunkChars);
   let prose = structuralText ? '' : selectGamingDocumentExcerpt(safeText, query, excerptLimit);
-  if (!structuralText && input.mode === 'guide') prose = preserveGamingSelectionAdjacency(prose, body);
+  if (!structuralText && input.mode === 'guide') prose = preserveGamingSelectionAdjacency(prose, body, input.game);
   if (!structuralText && input.mode === 'guide' && input.requireRequestCoverage) {
     const requirements = buildGamingRequestRequirements(input);
     for (const requirement of requirements) {

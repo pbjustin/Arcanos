@@ -89,12 +89,54 @@ function requestedDisembarkation(input: GamingRetrievalPolicyInput): boolean {
     && DISEMBARKATION_NEXT_QUERY.test(gamingTopicalRequest(input.prompt).trim());
 }
 
+/** Bind a third-person checkpoint to an earned player instruction in one walkthrough paragraph. */
+function gamingNarratedDisembarkation(text: string, game: string): string[] {
+  if (!/\bafter\s/iu.test(text) || !/\bdrive\s/iu.test(text)) return [];
+  const vessel = new RegExp(String.raw`^${WATERCRAFT}$`, 'iu');
+  const actors = [...new Set(resolveGamingRegistryGame(game)?.guideTopics?.flatMap(topic =>
+    topic.actions.flatMap(action => action.objects.some(object => vessel.test(object)) ? action.actors ?? [] : [])) ?? [])];
+  if (!actors.length) return [];
+  const actor = actors.map(gamingRegistryLiteralPattern).join('|');
+  const opening = new RegExp(String.raw`^after\s+(?:(?:watching|seeing)\s+the\s+introduction(?:\s+to\s+the\s+game)?\s+where\s+)?(?:${actor})(?:\s+and\s+(?:his|her|their)\s+(?:(?:fellow|other)\s+)?[\p{L}-]{1,32})?\s+${WATERCRAFT_EXIT}\s+(?:(?:the|a|an)\s+)?(?:(?!overlooking\b|facing\b|near\b|past\b|by\b|before\b|beside\b|platform\b)[\p{L}'’-]{1,32}\s+){0,2}${WATERCRAFT}(?:\s+(?:(?:that\s+brought\s+(?:them|you)\s+into)|at|in)\s+(?<location>[\p{L}][\p{L} -]{0,79}))?,\s*(?<companion>[\p{L}'’-]{1,32}(?:\s+(?!has\b)[\p{L}'’-]{1,32})?)\s+(?:(?:has\s+)?arrived|came|comes)\s+to\s+(?:collect|meet|pick\s+up)\s+you\.$`, 'iu');
+  const onward = /^(?:once|when)\s+you(?:\s+are|['’]re)\s+in\s+(?<possessor>his|her)\s+(?:car|vehicle),\s*you(?:['’]ll|\s+will)\s+(?:need|have)\s+to\s+(?<action>drive\s+(?<passenger>him|her)\s+(?:back\s+)?to\s+(?:(?:his|her|their|the)\s+)?(?:[\p{L}][\p{L} -]{1,80}|['‘][\p{L} -]{2,40}['’]))\.$/iu;
+  const handoffs: string[] = [];
+  for (const paragraph of text.split(/\n\s*\n/u)) {
+    // A heading or explanatory lead-in cannot license an illustrative sequence.
+    if (paragraph.length > 1_600 || !/^\s*after\b/iu.test(paragraph)) continue;
+    const acquired = gamingApplicabilityAssertionText(paragraph);
+    if (!acquired.complete) continue;
+    const [sentence, ...following] = paragraph.matchAll(/[^.!?\r\n]+[.!?](?=\s|$)/gu);
+    if (!sentence) continue;
+    const lead = sentence[0].trim();
+    const checkpoint = opening.exec(lead)?.groups;
+    if (!checkpoint || !acquired.text.slice(sentence.index, sentence.index + sentence[0].length).includes(lead)) continue;
+    const person = new RegExp(String.raw`^(?:he|she|${gamingRegistryLiteralPattern(checkpoint.companion)})(?=\s|['’])`, 'iu');
+    for (const next of following.slice(0, 3)) {
+      const statement = next[0].trim();
+      const direction = onward.exec(statement)?.groups;
+      if (direction) {
+        // Allow a quoted destination name, while the driving predicate itself must be acquired prose.
+        const prefix = statement.replace(/\s+['‘][\p{L} -]{2,40}['’]\.$/u, '');
+        if (acquired.text.slice(next.index, next.index + next[0].length).includes(prefix)
+          && (direction.possessor.toLowerCase() === 'his' ? 'him' : 'her') === direction.passenger.toLowerCase())
+          handoffs.push(gamingLexicalTokens(checkpoint.location ?? '').join(' ') + '\u0000' + gamingLexicalTokens(direction.action).join(' '));
+        break;
+      }
+      const continuesPickup = /\b(?:happy|glad|pleased)\s+to\s+see\s+you\b/iu.test(statement)
+        || /,\s*so\s+it['’]s\s+over\s+to\s+you\.$/iu.test(statement) && /\bto\s+drive\b/iu.test(statement);
+      if (!person.test(statement) || !continuesPickup
+        || /\b(?:next\s+(?:mission|chapter|quest)|later|afterwards|meanwhile|unless|no\s+(?:car|vehicle))\b/iu.test(statement)) break;
+    }
+  }
+  return handoffs;
+}
+
 /** Keep each affirmative player handoff intact so a bare request cannot pick between distinct routes. */
-export function gamingDisembarkationHandoffs(text: string): string[] {
+export function gamingDisembarkationHandoffs(text: string, game?: string, intactText = text): string[] {
   if (text.length > 8_000) return [];
   const owned = gamingApplicabilityAssertionText(text);
   if (!owned.complete) return [];
-  return owned.text.split(/\n+|(?<=[.!?])\s+|;\s*/u).flatMap(statement => {
+  const direct = owned.text.split(/\n+|(?<=[.!?])\s+|;\s*/u).flatMap(statement => {
     if (/[?"“”‘`]|\b(?:not|never|unless|if|might|could|would|will|plans?|planned|planning|expects?|expected|suppose|imagine|rumou?rs?|supposedly|reportedly)\b|n['’]t\b/iu.test(statement)
       || GAMEPLAY_FUTURE_RELEASE.test(statement)) return [];
     const handoff = DISEMBARKATION_HANDOFF.exec(statement.trim())?.groups;
@@ -102,6 +144,7 @@ export function gamingDisembarkationHandoffs(text: string): string[] {
     if (!gamingActionInstruction(handoff.action, false) && !WATERCRAFT_HANDOFF_ACTION.test(handoff.action)) return [];
     return [gamingLexicalTokens(handoff.location ?? '').join(' ') + '\u0000' + gamingLexicalTokens(handoff.action).join(' ')];
   });
+  return game && intactText.length <= 8_000 ? [...direct, ...gamingNarratedDisembarkation(intactText, game)] : direct;
 }
 
 /** Acquisition titles preserve their literal topic terms. */
@@ -446,7 +489,8 @@ export function hasGamingRelevantGuideContribution(text: string, input: GamingRe
   return anchors.length > 0 && gamingTermCoverage(text, anchors) > 0
     || input.mode === 'guide' && (EQUIPMENT_UPGRADE_WORD.test(input.prompt) || requestedDisembarkation(input))
       && buildGamingRequestRequirements(input).some(requirement => isGamingSemanticCoverageRequirement(requirement)
-        && gamingRequirementSupported(gamingAttributableClaimText(text, input.game), requirement));
+        && gamingRequirementSupported(text.split(/\n\s*\n/u).map(paragraph =>
+          gamingAttributableClaimText(paragraph, input.game)).join('\n\n'), requirement, text));
 }
 
 /** Prefer explicit paragraphs; flattened documents reuse the existing sentence boundary convention. */
@@ -469,7 +513,7 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     if (countedStarts.length && paragraphs.length === 1 && ORDERED_ACTION_CONTINUATION.test(unit.trim())
       && (unit.length > 8_000 || !countedStarts.some(requirement => gamingStartingActions(unit, requirement.terms) > 0))) continue;
     if (gamingTermCoverage(unit, focusTerms) === 0 && !semanticRequirements.some(requirement =>
-      gamingRequirementSupported(gamingAttributableClaimText(unit, input.game), requirement))) continue;
+      gamingRequirementSupported(gamingAttributableClaimText(unit, input.game), requirement, unit))) continue;
     included.add(index);
     if (index > 0 && /\b(?:prerequisite|requires?|must first|only if)\b/iu.test(units[index - 1])) included.add(index - 1);
     // A paragraph is already a complete source unit; do not infer that the next
@@ -528,7 +572,7 @@ export interface GamingRequestRequirement {
   minimumActions?: number;
   relation?: 'materials' | 'acquisition';
   equipmentUpgrade?: GamingEquipmentUpgrade;
-  disembarkation?: true;
+  disembarkation?: string;
   operationSetting?: string;
 }
 
@@ -538,7 +582,7 @@ const OPERATION_SETTING_INSTRUCTION = new RegExp(String.raw`^with\s+(${OPERATION
 
 /** These bounded relationships can supply coverage without shared topic tokens. */
 export function isGamingSemanticCoverageRequirement(requirement: GamingRequestRequirement): boolean {
-  return requirement.equipmentUpgrade !== undefined || requirement.disembarkation === true;
+  return requirement.equipmentUpgrade !== undefined || requirement.disembarkation !== undefined;
 }
 
 /** Identify closed prerequisite/start wording without asserting source support. */
@@ -744,11 +788,16 @@ export function selectGamingStartingExcerpt(text: string, requirement: GamingReq
 }
 
 /** Scoping can omit sentences. A dependent handoff still needs original adjacency. */
-export function preserveGamingSelectionAdjacency(excerpt: string, source: string): string {
+export function preserveGamingSelectionAdjacency(excerpt: string, source: string, game?: string): string {
+  // Sanitation deliberately collapses whitespace; it must not join a
+  // narrative checkpoint and a driving instruction from different paragraphs.
+  const paragraphs = source.split(/\n\s*\n/u);
+  const fromOneParagraph = () => paragraphs.some(paragraph => paragraph.normalize('NFKC').replace(/\s+/gu, ' ').includes(excerpt));
+  if (game && paragraphs.length > 1 && gamingNarratedDisembarkation(excerpt, game).length
+    && !fromOneParagraph()) return '';
   const units = splitGamingProse(excerpt, /(?<=[.!?])\s+/u);
   const handoff = units.findIndex(unit => SELECTION_HANDOFF.test(unit.trim()) || AFTER_SELECTION.test(unit.trim()));
-  if (handoff < 0 || source.split(/\n\s*\n/u)
-    .some(paragraph => paragraph.normalize('NFKC').replace(/\s+/gu, ' ').includes(excerpt))) return excerpt;
+  if (handoff < 0 || fromOneParagraph()) return excerpt;
   return units.slice(0, handoff).join(' ').trim();
 }
 
@@ -869,14 +918,14 @@ function gamingOperationSettingSupported(text: string, setting: string, terms: r
 
 /** Exact named topic anchors plus an acquired requirement/action relationship.
  * These closed grammatical alternatives do not relax other lexical clauses. */
-export function gamingRequirementSupported(text: string, requirement: GamingRequestRequirement): boolean {
+export function gamingRequirementSupported(text: string, requirement: GamingRequestRequirement, intactText = text): boolean {
   if (text.length > 8_000) return false;
   if (requirement.minimumActions !== undefined && (!Number.isInteger(requirement.minimumActions)
     || requirement.minimumActions < 1 || requirement.minimumActions > 8)) return false;
   if (requirement.relation === 'materials') return gamingRequiredMaterials(text, requirement.terms).length > 0;
   if (requirement.relation === 'acquisition') return gamingMaterialAcquisitionSupported(text, requirement.terms);
   if (requirement.equipmentUpgrade !== undefined) return supportsEquipmentUpgrade(text, requirement.equipmentUpgrade);
-  if (requirement.disembarkation) return gamingDisembarkationHandoffs(text).length > 0;
+  if (requirement.disembarkation) return gamingDisembarkationHandoffs(text, requirement.disembarkation, intactText).length > 0;
   if (requirement.operationSetting) return gamingOperationSettingSupported(text, requirement.operationSetting, requirement.terms);
   if (!requirement.procedure) return gamingTermCoverage(text, requirement.terms) === 1;
   if (requirement.procedure === 'start') return gamingStartingActions(text, requirement.terms) >= (requirement.minimumActions ?? 1);
@@ -1015,7 +1064,7 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
       ...(equipmentUpgrade ? { equipmentUpgrade } : {}), ...(operationSetting ? { operationSetting } : {}) };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
   if (disembarkation) requirements.push({
-    requirement: 'next action after disembarkation', terms: ['boat'], disembarkation: true
+    requirement: 'next action after disembarkation', terms: ['boat'], disembarkation: input.game
   });
   // A coordinated target is one atomic request, not two independently supported facts.
   return (requirements.length > 1 || hasAtomicTarget || hasCoordinatedTarget && requirements.length === 1

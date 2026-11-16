@@ -18,6 +18,7 @@ import { gamingAcquiredGameDeclarationPattern, withoutGamingAcquiredGameDeclarat
 import { gamingIdentityNeedsExplicitContext, readGamingAcquiredAliasDeclarations,
   resolveGamingAcquiredIdentity, hasGamingAffirmativeIdentityProse, readGamingPrimaryGameDefinition, gamingAcquiredNominalScope, GAMING_ACQUIRED_SCOPE_BOUNDARY } from './gamingAcquiredIdentity.js';
 import { normalizeGamingComparableIdentity } from './gamingGameRegistry.js';
+import { gamingArticleContinuationIsRetained } from './gamingDocumentTextNormalization.js';
 
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
   .includes(`-${normalizeGamingGameIdentity(expected)}-`);
@@ -786,7 +787,10 @@ export function gamingClearScopedArticleText(document: Pick<ResolvedGamingDocume
   const leadStart = scopedText.indexOf(scope.lead);
   if (leadStart === -1) return '';
   const leadEnd = leadStart + scope.lead.length;
-  const selected = [scope.heading, scope.lead];
+  const continuation = scope.continuation;
+  const excerpt = continuation && gamingArticleContinuationIsRetained(scope, scopedText)
+    ? [scope.lead, continuation.heading, continuation.text].join('\n') : scope.lead;
+  const selected = [scope.heading, excerpt];
   if (!/\bin the game\s/iu.test(scopedText.slice(leadEnd))) return selected.join('\n\n');
   const { subjects, unquotedText, complete } = acquiredBodySubjects(scopedText);
   if (!complete) return selected.join('\n\n');
