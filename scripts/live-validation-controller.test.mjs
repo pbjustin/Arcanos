@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -8,7 +9,8 @@ import test from 'node:test';
 import { parseLiveValidationControllerArguments, runLiveValidationController, validateLiveValidationArtifact,
   normalizeLiveValidationInventory, assertLiveValidationDeployment, createLiveValidationRailwayApi,
   cleanupLiveValidationRun, sanitizeLiveValidationObservation, sanitizeLiveValidationUsage, validateLiveValidationOperatorArtifact,
-  LIVE_VALIDATION_OPERATOR_GATE_IDS, resolveLiveValidationSelection, createLiveValidationServiceClient } from './live-validation-controller.mjs';
+  LIVE_VALIDATION_OPERATOR_GATE_IDS, resolveLiveValidationSelection, createLiveValidationServiceClient,
+  readTrustedRunnerGitState } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
 import { createLivePreviewEvidence, LIVE_PREVIEW_CASE_MANIFEST,
@@ -282,6 +284,34 @@ test('PR resolution allows the authorized draft, rejects moved heads and ambiguo
   await assert.rejects(resolveLiveValidationSelection(ghFixture(f, { ambiguous: true }), { commitSha: sha }), { code: 'LIVE_VALIDATION_PR_SELECTION_AMBIGUOUS' });
   await assert.rejects(resolveLiveValidationSelection(github, { prNumber: 1528, commitSha: 'f'.repeat(40) }));
 });
+test('trusted checkout accepts exact GitHub HTTPS origins and rejects lookalikes and dirty checkouts', async t => {
+  const checkout = path.join(fixture(t).directory, 'checkout'); mkdirSync(checkout);
+  const checkoutGit = (...args) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8', windowsHide: true }).trim();
+  checkoutGit('init', '--quiet', '--template=');
+  checkoutGit('-c', 'core.hooksPath=.git/hooks', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '--allow-empty', '--no-gpg-sign', '--quiet', '-m', 'Trusted checkout fixture');
+  const expected = { root: checkout, head: checkoutGit('rev-parse', 'HEAD'), clean: true, repository: 'pbjustin/Arcanos' };
+  const httpsOrigin = 'https://github.com/pbjustin/Arcanos';
+  const rejected = { code: 'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID' };
+  await t.test('accepts the canonical .git origin', () => {
+    checkoutGit('config', 'remote.origin.url', httpsOrigin + '.git');
+    assert.deepEqual(readTrustedRunnerGitState(checkout), expected);
+  });
+  await t.test('accepts the exact origin set by GitHub Actions checkout', () => {
+    checkoutGit('config', 'remote.origin.url', httpsOrigin);
+    assert.deepEqual(readTrustedRunnerGitState(checkout), expected);
+  });
+  await t.test('rejects different repositories, hosts and protocols and a dirty trusted checkout', () => {
+    for (const origin of ['https://github.com/another-owner/Arcanos.git',
+      'https://github.example.invalid/pbjustin/Arcanos.git', 'ssh://git@github.com/pbjustin/Arcanos.git']) {
+      checkoutGit('config', 'remote.origin.url', origin);
+      assert.throws(() => readTrustedRunnerGitState(checkout), rejected);
+    }
+    checkoutGit('config', 'remote.origin.url', httpsOrigin + '.git');
+    writeFileSync(path.join(checkout, 'untracked.txt'), 'dirty checkout');
+    assert.throws(() => readTrustedRunnerGitState(checkout), rejected);
+  });
+});
 test('independent archive hashes and manifest SHA/tree/compiled identity reject drift or symlink artifacts', t => {
   const f = fixture(t); const args = parseLiveValidationControllerArguments(f.argv);
   assert.equal(validateLiveValidationArtifact(f.binding, { args, git, directory: f.artifactDirectory, environment: f.environment }).sourceCommit, sha);
@@ -400,6 +430,42 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
     assert.equal(serialized.includes('privateAnswer'), false);
     assert.equal(serialized.includes('contextFingerprint'), false);
   }
+});
+
+test('live validation and cleanup distinguish stopped deployments from running deployments in Railway inventory', async t => {
+  const cases = [
+    ['verified stopped entry', {}, 'PASS'],
+    ['running entry', { deploymentStopped: false }, 'BLOCKED'],
+    ['entry with unknown stop state', { deploymentStopped: null }, 'BLOCKED'],
+    ['foreign stopped entry', { environmentId: LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID }, 'BLOCKED'],
+  ];
+  for (const [label, changes, expectedStatus] of cases) await t.test(label, async child => {
+    const f = fixture(child); let deployed = false;
+    const e = executionFixture(f, { onDeploy: () => { deployed = true; } });
+    const readInventory = e.railway.inventory;
+    e.railway.inventory = async () => {
+      const raw = await readInventory();
+      const instance = raw.environment.serviceInstances.edges[0].node;
+      if (!deployed) {
+        const previous = { ...deployment(f.target, true), id: '66666666-6666-4666-8666-666666666666' };
+        previous.meta.commitHash = trustedSha;
+        instance.latestDeployment = previous;
+        instance.activeDeployments = [{ ...previous, ...changes }];
+      } else if (e.stopped()) {
+        instance.activeDeployments = [instance.latestDeployment];
+      }
+      return raw;
+    };
+    const result = await execute(f, e);
+    assert.equal(result.status, expectedStatus, result.code);
+    if (expectedStatus === 'PASS') {
+      assert.equal(result.cleanup.status, 'PASS');
+      assert.equal(result.cleanup.runtimeDeploymentStopped, true);
+      assert.deepEqual(e.seen.slice(0, 3), ['bind', 'deploy', '/ready']);
+    } else {
+      assert.deepEqual(e.seen, []);
+    }
+  });
 });
 
 test('private answer validation accepts exact bound content while cloning it away from caller mutation', () => {

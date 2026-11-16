@@ -17,6 +17,11 @@ export const liveValidationTargetSha256 = target => canonicalHash(validateLiveVa
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[0-9a-f]{40}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
+export const LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES = Object.freeze({
+  'source.tar': 384 * 1024 * 1024,
+  'build.tar': 128 * 1024 * 1024,
+  'candidate-attestation.json': 16_384,
+});
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PROFILE_IDS = ['gaming-guide-positive', 'gaming-guide-negative'];
 const MODEL_STAGES = ['intake', 'reasoning', 'final'];
@@ -182,12 +187,13 @@ export function readTrustedRunnerGitState(root) {
   const git = args => execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', ...args], {
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 5000, maxBuffer: 128 * 1024 }).trim();
   const head = git(['rev-parse', 'HEAD']);
+  const origin = git(['config', '--get', 'remote.origin.url']);
   requireController(realpathSync(git(['rev-parse', '--show-toplevel'])) === realpathSync(root)
-    && git(['config', '--get', 'remote.origin.url']) === 'https://github.com/pbjustin/Arcanos.git'
+    && ['https://github.com/pbjustin/Arcanos', 'https://github.com/pbjustin/Arcanos.git'].includes(origin)
     && SHA.test(head) && git(['status', '--porcelain', '--untracked-files=all']) === '', 'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID');
   return { root, head, clean: true, repository: 'pbjustin/Arcanos' };
 }
-function opaqueHash(file, maximum = 2 * 1024 * 1024 * 1024) {
+export function hashLiveValidationArtifactFile(file, maximum = 2 * 1024 * 1024 * 1024) {
   requireController(!lstatSync(file).isSymbolicLink(), 'LIVE_VALIDATION_ARTIFACT_INVALID');
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -197,9 +203,11 @@ function opaqueHash(file, maximum = 2 * 1024 * 1024 * 1024) {
     const hash = createHash('sha256'); const buffer = Buffer.alloc(1024 * 1024);
     let offset = 0;
     while (offset < stat.size) {
-      const bytes = readSync(fd, buffer, 0, buffer.length, offset); requireController(bytes > 0, 'LIVE_VALIDATION_ARTIFACT_INVALID');
+      const bytes = readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
+      requireController(bytes > 0, 'LIVE_VALIDATION_ARTIFACT_INVALID');
       hash.update(buffer.subarray(0, bytes)); offset += bytes;
     }
+    requireController(fstatSync(fd).size === stat.size, 'LIVE_VALIDATION_ARTIFACT_INVALID');
     return hash.digest('hex');
   } finally { closeSync(fd); }
 }
@@ -220,15 +228,18 @@ export function validateLiveValidationArtifact(binding, { args, git, directory, 
   if (environment.WORKFLOW_RUN_ATTEMPT) requireController(environment.WORKFLOW_RUN_ATTEMPT === '1', 'LIVE_VALIDATION_RERUN_FORBIDDEN');
   requireController(path.isAbsolute(directory ?? '') && !lstatSync(directory).isSymbolicLink()
     && lstatSync(directory).isDirectory(), 'LIVE_VALIDATION_ARTIFACT_INVALID');
-  for (const name of ['source.tar', 'build.tar']) requireController(opaqueHash(path.join(directory, name)) === binding.files[name],
-    'LIVE_VALIDATION_ARTIFACT_DIGEST_MISMATCH');
+  for (const name of ['source.tar', 'build.tar']) {
+    requireController(hashLiveValidationArtifactFile(path.join(directory, name), LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES[name])
+      === binding.files[name], 'LIVE_VALIDATION_ARTIFACT_DIGEST_MISMATCH');
+  }
   const manifestFile = path.join(directory, 'candidate-attestation.json');
   requireController(!lstatSync(manifestFile).isSymbolicLink(), 'LIVE_VALIDATION_ARTIFACT_INVALID');
   const manifestFd = openSync(manifestFile, constants.O_RDONLY | constants.O_NOFOLLOW);
   let raw;
   try {
     const stat = fstatSync(manifestFd);
-    requireController(stat.isFile() && stat.size > 0 && stat.size <= 16_384, 'LIVE_VALIDATION_ARTIFACT_INVALID');
+    requireController(stat.isFile() && stat.size > 0 && stat.size <= LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES['candidate-attestation.json'],
+      'LIVE_VALIDATION_ARTIFACT_INVALID');
     raw = readFileSync(manifestFd, 'utf8');
   } finally { closeSync(manifestFd); }
   requireController(Buffer.byteLength(raw) <= 16_384
@@ -258,7 +269,7 @@ export function validateLiveValidationOperatorArtifact(binding, { args, git, dir
   }
   requireController(path.isAbsolute(directory ?? '') && !lstatSync(directory).isSymbolicLink()
     && lstatSync(directory).isDirectory(), 'LIVE_VALIDATION_ARTIFACT_INVALID');
-  for (const name of ['source.tar', 'build.tar']) requireController(opaqueHash(path.join(directory, name)) === binding.files[name],
+  for (const name of ['source.tar', 'build.tar']) requireController(hashLiveValidationArtifactFile(path.join(directory, name)) === binding.files[name],
     'LIVE_VALIDATION_ARTIFACT_DIGEST_MISMATCH');
   return Object.freeze({ ...structuredClone(binding), controllerRevision: binding.trustedControllerSha,
     artifactAuthority: 'operator_bootstrap', attestationSha256: digest(raw) });
@@ -458,8 +469,11 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
     const latest = instance.latestDeployment;
     requireController(Array.isArray(instance.activeDeployments) && instance.activeDeployments.length <= 1
       && (latest || instance.activeDeployments.length === 0), 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID');
-    if (latest) requireController(latest.projectId === target.projectId && latest.environmentId === target.environmentId
-      && latest.serviceId === instance.serviceId && UUID.test(latest.id ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
+    const deployments = latest ? [latest, ...instance.activeDeployments] : instance.activeDeployments;
+    requireController(deployments.every(deployment => record(deployment)
+      && deployment.projectId === target.projectId && deployment.environmentId === target.environmentId
+      && deployment.serviceId === instance.serviceId && UUID.test(deployment.id ?? '')),
+    'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
     const observedCommitSha = latest ? metadata(latest.meta)?.commitHash : null;
     requireController(!latest || SHA.test(observedCommitSha ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_SHA_MISMATCH');
     if (phase === 'paid') {
@@ -478,7 +492,10 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   const inventory = assertLiveValidationInventory(target, { projectId: env.projectId, environmentId: env.id, environmentName: env.name,
     sharedVariableNames: [...new Set([...variables.filter(item => !item.serviceId).map(item => item.name), ...Object.keys(config.sharedVariables)])],
     privateNetworkEnabled: true, volumes: mounts, services }, { phase });
-  return { inventory, instances };
+  // Railway can retain a stopped SUCCESS record in activeDeployments.
+  return { inventory, instances: instances.map(instance => ({
+    ...instance, activeDeployments: instance.activeDeployments.filter(deployment => deployment.deploymentStopped !== true),
+  })) };
 }
 
 export function assertLiveValidationDeployment(deployment, target, role, commitSha, { successful = true } = {}) {

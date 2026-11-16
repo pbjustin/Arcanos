@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
-  symlinkSync, writeFileSync } from 'node:fs';
+  symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -367,6 +367,51 @@ test('trusted artifact binding recomputes opaque bytes and pins source, controll
     assert.equal(record.attestationSha256, createHash('sha256').update(readFileSync(fixture.manifestPath)).digest('hex'));
     assert.equal(statSync(recordPath).mode & 0o777, 0o600);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+function sizeCandidateArchive(fixture, name, size) {
+  const archive = path.join(fixture.directory, name);
+  truncateSync(archive, 0);
+  truncateSync(archive, size);
+  const zeroes = Buffer.alloc(1024 * 1024);
+  const digest = createHash('sha256');
+  for (let offset = 0; offset < size; offset += zeroes.length) {
+    digest.update(zeroes.subarray(0, Math.min(zeroes.length, size - offset)));
+  }
+  fixture.manifest.files[name] = digest.digest('hex');
+  writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest));
+}
+
+test('trusted artifact binding accepts a source archive above the old 128 MiB cap', () => {
+  const fixture = candidateFixture();
+  try {
+    sizeCandidateArchive(fixture, 'source.tar', 128 * 1024 * 1024 + 1);
+    const result = runInline(binding, fixture.env);
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(readFileSync(path.join(fixture.root, 'artifact-attestation.json'), 'utf8'));
+    assert.deepEqual(record.files, fixture.manifest.files);
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('trusted artifact binding rejects archives and manifests above their individual limits', () => {
+  for (const [name, size] of [
+    ['source.tar', 384 * 1024 * 1024 + 1],
+    ['build.tar', 128 * 1024 * 1024 + 1],
+    ['candidate-attestation.json', 16 * 1024 + 1]
+  ]) {
+    const fixture = candidateFixture();
+    try {
+      if (name === 'candidate-attestation.json') {
+        writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest).padEnd(size));
+      } else {
+        sizeCandidateArchive(fixture, name, size);
+      }
+      const result = runInline(binding, fixture.env);
+      assert.equal(result.status, 1, name);
+      assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_ARTIFACT_INVALID', name);
+      assert.equal(existsSync(path.join(fixture.root, 'artifact-attestation.json')), false, name);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
 });
 
 test('trusted artifact binding admits only the exact selected named profile', () => {
