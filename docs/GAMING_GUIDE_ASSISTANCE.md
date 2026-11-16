@@ -153,10 +153,12 @@ own header can corroborate identity with the retained topic heading and an
 affirmative claim in the opening prose. The game registry records the entities
 and action-object relationships that can corroborate each topic. All of them
 must be supported by the same claim. Navigation, image descriptions, neighboring articles,
-scattered names, and comparisons cannot supply this proof. Hybrid v2 can use only that intact
-opening passage when it relies on this identity proof. The whole acquired
-article still goes through contradiction and applicability checks. This
-opening-only proof does not grant storage or publisher authority.
+scattered names, and comparisons cannot supply this proof. In Hybrid v2 the
+opening claim attests to its own passage. A complete later statement can also
+contribute when it independently names the requested game and passes the same
+applicability, coverage, and provenance checks. The whole acquired article
+still goes through contradiction and applicability checks. These passage-level
+checks never grant storage permission or publisher authority.
 
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted

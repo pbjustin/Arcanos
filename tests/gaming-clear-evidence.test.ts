@@ -1,7 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { assessGamingClearEvidence, assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
 import { evaluateGamingFreshness, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '../src/shared/gaming/gamingFreshnessCore.js';
-import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { selectGamingCoverageEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 const now = new Date('2026-09-09T12:00:00Z');
 const staticInput = { game: 'The Legend of Zelda: Ocarina of Time', mode: 'guide' as const, prompt: 'How do I open the copper gate?' };
@@ -29,6 +29,119 @@ const run = (input: typeof staticInput | { game: string; mode: 'guide' | 'build'
   assessGamingClearEvidence(input, data, { now });
 
 describe('Gaming CLEAR bounded evidence decisions', () => {
+  test.each([
+    ['Elden Ring', 'How do I upgrade my weapons?', 'Use the smithing table to reinforce your armaments with Smithing Stones.'],
+    ['Monster Hunter: World', 'How can I strengthen my armour?', 'At the Smithy, improve your armor with Armor Spheres.'],
+    ['Stardew Valley', 'How can I improve my tool?', 'To strengthen your tools, bring the selected item and metal bars to the blacksmith.'],
+    ['Elden Ring', 'How do I improve my armaments?', 'At the smithing table, use Smithing Stones to upgrade your weapons.']
+  ])('recognizes an acquired improvement action and method for %s without exact wording', (game, prompt, passage) => {
+    const input = { game, mode: 'guide' as const, prompt };
+    const data = knowledge(game, [passage]);
+    expect(assessGamingRequestCoverage(input, data)).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(assessGamingClearEvidence(input, data, { now, requireRequestCoverage: true }).decision).toBe('accept');
+  });
+
+  test.each([
+    ['a different object', 'Use the smithing table to upgrade a weapon. The station next door stores equipment.'],
+    ['an unrelated subject', 'Use the smithing table to upgrade the crafting station overlooking your equipment.'],
+    ['a negative instruction', 'Never upgrade your equipment at this smithing table.'],
+    ['a hypothetical action', 'If the blacksmith opens tomorrow, you might upgrade your equipment with star coins.'],
+    ['a speculative report', 'Players are planning to upgrade their equipment at the smithing table.'],
+    ['a future feature', 'Use the smithing table to upgrade your equipment with star coins starting in the next patch.'],
+    ['a quoted claim', 'The notice repeats "Use the smithing table to upgrade your equipment with Smithing Stones."'],
+    ['a time with no method', 'You can upgrade your equipment at some point.'],
+    ['an expressly withheld method', 'Upgrade your equipment with no method documented.'],
+    ['a guide pointer', 'In the game Elden Ring, use this guide to strengthen your gear.'],
+    ['a walkthrough pointer', 'To improve your gear, visit this walkthrough.'],
+    ['a still-unavailable item', 'Reinforce your gear with an item that is still unavailable.'],
+    ['an unknown location', 'Upgrade your gear at some unknown location.'],
+    ['an instruction without a method', 'Upgrade your equipment. That makes fights easier.']
+  ])('does not credit %s as a method for improving equipment', (_description, passage) => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I upgrade my equipment?' };
+    const data = knowledge(input.game, [passage]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data, { now, requireRequestCoverage: true }).decision).not.toBe('accept');
+  });
+
+  test('does not turn a generic improvement method into proof for a named item', () => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I upgrade the Bloodhound’s Fang?' };
+    const data = knowledge(input.game, ['Use the smithing table to reinforce your armaments with Smithing Stones.']);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+  });
+
+  test('does not credit a topic named only in an explicit walkthrough disclaimer', () => {
+    const input = { game: 'Hollow Knight', mode: 'guide' as const, prompt: 'How do I unlock the Forgotten Crossroads Stag Station?' };
+    const passage = 'The Dirtmouth station opens from below after the gate is unlocked. No Forgotten Crossroads Stag Station instructions are provided.';
+    expect(assessGamingRequestCoverage(input, knowledge(input.game, [passage])).coverageSatisfied).toBe(false);
+  });
+
+  test('still requires the second requested fact beside a paraphrased equipment action', () => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I upgrade my weapons, and where is the Celestial Dew?' };
+    const method = 'Use the smithing table to reinforce your armaments with Smithing Stones.';
+    const partial = assessGamingRequestCoverage(input, knowledge(input.game, [method]));
+    expect(partial.coverageSatisfied).toBe(false);
+    expect(partial.requirementSupport.map(item => item.evidenceIds.length)).toEqual([1, 0]);
+    const complete = assessGamingRequestCoverage(input, knowledge(input.game, [method, 'The Celestial Dew is beside the locked gate.']));
+    expect(complete.coverageSatisfied).toBe(true);
+  });
+
+  const disembarkationRequest = { game: 'Disco Elysium', mode: 'guide' as const,
+    prompt: 'What should I do next?', progressPoint: 'Just got off the boat.', spoilerMode: 'light' as const };
+
+  test.each([
+    'After disembarking from the ship at the docks, follow the path past the mooring post.',
+    'Once you step off the ferry, walk to the ticket office.'
+  ])('credits an explicit player disembarkation and its actual next action', passage => {
+    const data = knowledge(disembarkationRequest.game, [passage]);
+    expect(assessGamingRequestCoverage(disembarkationRequest, data).coverageSatisfied).toBe(true);
+    expect(assessGamingClearEvidence(disembarkationRequest, data, { now }).decision).toBe('accept');
+  });
+
+  test.each([
+    'After disembarking from a platform overlooking the boat, follow the path past the mooring post.',
+    'After the sailor gets off the boat, follow the path past the mooring post.',
+    'After you did not get off the boat, follow the path past the mooring post.',
+    'After arriving at the docks by boat, follow the path past the mooring post.',
+    'The boat docks before the path opens. Follow the path past the mooring post.',
+    'After disembarking from the ship, read the separate walkthrough for next steps.',
+    'After disembarking from the ship, drive away once the next patch unlocks the car.',
+    'You got off the boat at the docks. There is no next instruction here.',
+    '“After you get off the boat, follow the path past the mooring post.”'
+  ])('does not invent a player action or causal handoff from %s', passage => {
+    const data = knowledge(disembarkationRequest.game, [passage]);
+    expect(assessGamingRequestCoverage(disembarkationRequest, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(disembarkationRequest, data, { now }).decision).not.toBe('accept');
+  });
+
+  test('cannot use passage selection to choose an unspecified disembarkation checkpoint', () => {
+    const input = { ...disembarkationRequest, game: 'Sea of Thieves' };
+    const routes = [
+      'After disembarking from the ship at Sanctuary Outpost, visit the trading company.',
+      'After disembarking from the ship at Port Merrick, follow the path to the tavern.'
+    ];
+    for (const passages of [routes, [routes.join(' ')]]) {
+      const data = knowledge(input.game, passages);
+      expect(assessGamingRequestCoverage(input, data)).toMatchObject({
+        coverageSatisfied: false, gapAssessmentStatus: 'not_assessed'
+      });
+      expect(assessGamingClearEvidence(input, data, { now }).decision).not.toBe('accept');
+    }
+    const data = knowledge(input.game, routes);
+    const pool = data.evidence!.map((evidence, index) => ({ evidence, source: data.sources[index] }));
+    const limits = { chunkChars: 1_200, maxChunks: 1, maxSources: 1, maxContextChars: 1_200, structuredEvidenceChars: 8_000 };
+    expect(selectGamingCoverageEvidence(pool, input, limits, assessGamingRequestCoverage)).toEqual([]);
+    expect(selectGamingCoverageEvidence(pool.slice(0, 1), input, limits, assessGamingRequestCoverage)).toHaveLength(1);
+    expect(assessGamingRequestCoverage(input, knowledge(input.game, [routes[0], routes[0]])).coverageSatisfied).toBe(true);
+  });
+
+  test('still checks a separate requested topic after matching disembarkation', () => {
+    const input = { ...disembarkationRequest, prompt: 'What should I do next, and where is the elevator?' };
+    const passage = 'After disembarking from the ship at the docks, follow the path past the mooring post.';
+    const coverage = assessGamingRequestCoverage(input, knowledge(input.game, [passage]));
+    expect(coverage.coverageSatisfied).toBe(false);
+    expect(coverage.requirementSupport.map(item => item.evidenceIds.length)).toEqual([0, 1]);
+  });
+
   const gtaProgressRequest = { game: 'Grand Theft Auto IV', mode: 'guide' as const,
     prompt: 'What should I do next?', progressPoint: 'Just arrived by boat.', spoilerMode: 'light' as const };
 

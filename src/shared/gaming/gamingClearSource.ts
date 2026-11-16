@@ -25,6 +25,7 @@ const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|
 const PUBLISHER_DATE_PREFACE = /\b(?:last\s+)?(?:updated|published)(?:\s+on)?\s+(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{4}-\d{2}-\d{2})(?=\s|[.|•–—]|$)/iu;
 const PUBLISHER_BYLINE_PREFACE = /^(?:written\s+)?by\s+[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,5}$/iu;
 const PRIMARY_IDENTITY_SCOPE_CHARS = 32_000;
+const NON_AFFIRMING_GUIDE_CLAIM = /\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|may|might|maybe|perhaps|possibly|probably|likely|plan|plans|planned|planning|proposed|expected|expect|intended|supposed|scheduled|speculative|uncertain|unconfirmed|reported|reportedly|alleged|allegedly|not|no|never|instead|versus|poster|captions?|screenshots?|glossary|index|examples?|hypothetical|references?|mentions?)\b|n['\u2019]t\b/iu;
 // The resolver already bounds acquired documents. Independent limits make
 // incomplete contradiction inspection explicit rather than accepting a suffix.
 const IDENTITY_SCOPE_SCAN_LIMITS = Object.freeze({ documentChars: 1_000_000, assertions: 1_024, prefixChars: 512, subjectChars: 160 });
@@ -227,8 +228,7 @@ function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegist
     return claims.some(claim => actions.some(action => action.test(claim)));
   }
   for (const [, sentence] of prose.unquotedText.matchAll(/(?:^|(?<=[.!?])\s+)([^.!?\r\n]{1,400})\.(?=\s|$)/gu)) {
-    if (/\b(?:unlike|like|compared|comparison|contrast|similar|if|would|could|may|might|maybe|perhaps|possibly|probably|likely|plan|plans|planned|planning|proposed|expected|expect|intended|supposed|scheduled|speculative|uncertain|unconfirmed|reported|reportedly|alleged|allegedly|not|no|never|instead|versus|poster|captions?|screenshots?|glossary|index|examples?|hypothetical|references?|mentions?)\b|n['\u2019]t\b/iu.test(sentence))
-      continue;
+    if (NON_AFFIRMING_GUIDE_CLAIM.test(sentence)) continue;
     const claims = gamingAttributableClaimText(sentence, game).split('\n');
     if (claims.some(claim => (!requireEntities || entities.every(entity => entity.test(claim))) && actions.some((action, index) => {
       const match = action.exec(claim);
@@ -411,10 +411,15 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const topicDefinitions = leadingHeading && topicProse.startsWith(leadingHeading) ? topicProse.slice(leadingHeading.length) : topicProse;
   const topicOffset = bodyScopes.unquotedText.length - topicDefinitions.length;
   const acquiredTopicScopes = new Map<string, Array<{ game: string; index: number }>>();
+  const acquiredHeadingNames = document.metadata.headings?.split(/\s+\|\s+/u)
+    .filter(heading => heading.length < 240).map(normalizeGamingGameIdentity) ?? [];
   let topicScopeCount = 0;
   for (const definition of topicDefinitions.matchAll(/(?:^|[.!?,;\n])\s*([^.!?,;\n]{1,120}?)\s+is\s+(?:a|an)\s+(?:(?:introductory|optional|starting|early|late|main|side|playable|non-player|named|central|remote)\s+){0,3}(?:location|area|region|town|city|village|settlement|dungeon|planet|world|quest|mission|objective|character|companion|boss|weapon|item|spell|skill|mechanic)\s+in\s+([^.!?,;\n]{1,120})(?=[.!?,;\n]|$)/giu)) {
     if (++topicScopeCount > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
-    const topic = normalizeGamingGameIdentity(definition[1]);
+    const subject = normalizeGamingGameIdentity(definition[1]);
+    // HTML can flatten a section heading directly into its own definition.
+    // An exact repeated heading still requires the author's typed game relation.
+    const topic = acquiredHeadingNames.find(heading => subject === `${heading}-${heading}`) ?? subject;
     acquiredTopicScopes.set(topic, [...(acquiredTopicScopes.get(topic) ?? []),
       { game: definition[2].trim(), index: topicOffset + definition.index }]);
   }
@@ -431,14 +436,19 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // Alias detection returns only the game. Keep the acquired suffix so a
     // registered game can still corroborate the exact topic its guide names.
     const identity = normalizeGamingGameIdentity(detected.source === 'alias' ? topicTitle : detected.game ?? topicTitle);
+    const matchingPrefixes = [...expected].filter(game => identity.startsWith(`${game}-`));
     if (detected.source === 'alias' && (!detected.game || !sourceGameMatches(detected.game)
-      || !registryGame?.guideTopics?.some(topic =>
-        [...expected].some(game => identity === `${game}-${normalizeGamingGameIdentity(topic.heading)}`)))) return false;
+      || !matchingPrefixes.length)) return false;
+    // Some families have independently released editions and no default.
+    // Exact topic ownership still cannot resolve that family-only ambiguity.
+    if (detected.source === 'alias' && !input.edition && !registryGame?.defaultEdition
+      && registryGame?.editions.some(edition => edition.kind === 'edition')
+      && !registryGame.guideTopics?.some(topic =>
+        matchingPrefixes.some(game => identity === `${game}-${normalizeGamingGameIdentity(topic.heading)}`))) return false;
     // A game-qualified mechanic still needs exact, independently acquired
     // ownership of its suffix. A matching family prefix alone proves nothing.
     const scopes = acquiredTopicScopes.get(identity)
-      ?? [...expected].filter(game => identity.startsWith(`${game}-`))
-        .flatMap(game => acquiredTopicScopes.get(identity.slice(game.length + 1)) ?? []);
+      ?? matchingPrefixes.flatMap(game => acquiredTopicScopes.get(identity.slice(game.length + 1)) ?? []);
     return Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
       && scopes.every(scope => sourceGameMatches(scope.game)));
   };
@@ -767,11 +777,39 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       : 'ACQUIRED_METADATA_AND_BODY_IDENTITY', 'gaming.identity.acquired_anchors_verified', 'acquired_anchors');
 }
 
-/** Narrative corroboration attests the intact opening only, even when the full article was fetched.
- * The heading is acquired text. Its paragraph break preserves the original lead as one unit for passage selection. */
-export function gamingClearScopedArticleText(document: Pick<ResolvedGamingDocument, 'metadata'>, scopedText: string): string {
+/** Keep the owned introduction and separately attributed, complete gameplay claims from the applicable prose. */
+export function gamingClearScopedArticleText(document: Pick<ResolvedGamingDocument, 'metadata'>, scopedText: string,
+  game: string): string {
   const scope = document.metadata.articleScope;
-  return scope?.lead && scopedText.includes(scope.lead) ? `${scope.heading}\n\n${scope.lead}` : '';
+  if (!scope?.lead) return '';
+  const leadStart = scopedText.indexOf(scope.lead);
+  if (leadStart === -1) return '';
+  const leadEnd = leadStart + scope.lead.length;
+  const selected = [scope.heading, scope.lead];
+  if (!/\bin the game\s/iu.test(scopedText.slice(leadEnd))) return selected.join('\n\n');
+  const { subjects, unquotedText, complete } = acquiredBodySubjects(scopedText);
+  if (!complete) return selected.join('\n\n');
+  for (const subject of subjects) {
+    if (subject.index < leadEnd || !subject.namedGameScope || !gamingRegistrySourceGameMatchesRequest(subject.text, game)) continue;
+    let before = unquotedText.slice(Math.max(leadEnd, subject.index - scope.heading.length - 16), subject.index).trimEnd();
+    // Normalization may concatenate the repeated article heading and its paragraph.
+    if (before.endsWith(scope.heading)) before = before.slice(0, -scope.heading.length).trimEnd();
+    if (before && !/[.!?]$/u.test(before)) continue;
+    const window = unquotedText.slice(subject.index, subject.index + 421);
+    const end = /[.!?](?=\s|$)/u.exec(window);
+    if (!end || end.index >= 420 || end[0] !== '.') continue;
+    const unquotedStatement = window.slice(0, end.index + 1);
+    // A period after an honorific, common abbreviation or initial is not a
+    // trustworthy endpoint for an independently selected instruction.
+    if (/\b(?:mr|mrs|ms|dr|prof|sr|jr|st|mt|vs|etc|no|[a-z])\.$/iu.test(unquotedStatement)) continue;
+    const statement = scopedText.slice(subject.index, subject.index + unquotedStatement.length);
+    if (statement !== unquotedStatement || /["“”`]|(?<![\p{L}\p{N}])['‘’]/u.test(statement)) continue;
+    const claim = gamingAttributableClaimText(statement, game);
+    if (!claim || NON_AFFIRMING_GUIDE_CLAIM.test(claim) || /\bwhether\b/iu.test(claim)) continue;
+    if (!selected.includes(statement)) selected.push(statement);
+    if (selected.length === 4) break;
+  }
+  return selected.join('\n\n');
 }
 
 export function gamingClearSourceRole(input: Pick<GamingStoredKnowledgeInput, 'mode'>,
@@ -798,7 +836,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
     && gamingEditionEvidenceMatchesRequest(options.freshness.edition, undefined, input);
   const applicableDocument = scoped.status === 'verified' ? { ...selectedDocument, text: scoped.text, evidenceUnits: scoped.units } : selectedDocument;
   const evidenceDocument = identity.reasonCodes.includes('ACQUIRED_ARTICLE_SCOPE_IDENTITY')
-    ? { ...applicableDocument, text: gamingClearScopedArticleText(document, applicableDocument.text), evidenceUnits: [] }
+    ? { ...applicableDocument, text: gamingClearScopedArticleText(document, gamingClearIntactProseText(applicableDocument), input.game), evidenceUnits: [] }
     : applicableDocument;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(evidenceDocument);

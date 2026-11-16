@@ -9,7 +9,7 @@ jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   cancel() {}
 } }));
 
-const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { assessGamingClearSourceIdentity, gamingClearScopedArticleText } = await import('../src/shared/gaming/gamingClearSource.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 
@@ -147,6 +147,38 @@ describe('independently acquired game and mechanic ownership', () => {
     ['GTA IV Jamaican Heat mission guide', 'Jamaican Heat is a mission in Grand Theft Auto IV. Niko picks up Little Jacob and covers him during the meeting.', 'Grand Theft Auto IV'],
   ])('preserves exact acquired ownership for the independently authored topic %s', (title, prose, game) => {
     expect(assess(title, prose, game)).toMatchObject({ status: 'verified' });
+  });
+
+  it.each([
+    ['XC2 Blade Combos', 'Blade Combos', 'mechanic', 'Xenoblade Chronicles 2'],
+    ['Elite Dangerous Supercruise Assist', 'Supercruise Assist', 'mechanic', 'Elite Dangerous'],
+    ['GTA IV Jamaican Heat', 'Jamaican Heat', 'mission', 'Grand Theft Auto IV']
+  ])('reads the compound acquired declaration for %s without registered topic metadata', (title, topic, kind, game) => {
+    expect(assess(`${title} guide`, `This guide covers ${title}. ${topic} is a ${kind} in ${game}. Follow the marked route to the checkpoint.`, game))
+      .toMatchObject({ status: 'verified' });
+    expect(assess(`${title} guide`, `This guide covers ${title}. "${topic} is a ${kind} in ${game}." Follow the marked route to the checkpoint.`, game))
+      .toMatchObject({ status: 'unknown' });
+  });
+
+  it('retains the exact intact late instruction separately from opening corroboration', () => {
+    const game = 'Grand Theft Auto IV';
+    const heading = 'The Cousins Bellic';
+    const lead = 'Niko steps off the boat in Liberty City with Roman.';
+    const independentlyScoped = 'In the game Grand Theft Auto IV, follow the yellow GPS route to Roman’s apartment and stop at the destination marker.';
+    const source = { metadata: { articleScope: { label: 'GTA IV - Story Mission Guide', heading, lead } } };
+    const content = [
+      heading, lead, 'Read the next section to continue the walkthrough. '.repeat(700), heading, independentlyScoped,
+      'In the game Grand Theft Auto IV, do not enter the police station.',
+      'In the game Grand Theft Auto IV, you might board the ferry.',
+      'In the game Grand Theft Auto IV, “follow a red marker to the airport.”',
+      'In the game Grand Theft Auto IV, should you steer to the airport?',
+      'In the game Grand Theft Auto V, follow the purple trail to the garage.',
+      'Unlike other guides in the game Grand Theft Auto IV, follow the gray route.',
+      'Follow the green route to a new destination.',
+      'In the game Grand Theft Auto IV, follow Dr. Santiago’s instructions to open the control gate.',
+      'In the game Grand Theft Auto IV, follow the last route and'
+    ].join(' ');
+    expect(gamingClearScopedArticleText(source, content, game)).toBe([heading, lead, independentlyScoped].join('\n\n'));
   });
 
   it.each([

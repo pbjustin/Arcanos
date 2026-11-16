@@ -2,7 +2,7 @@ import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtrac
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { assessGamingProgressionRequest, filterGamingNonAffirmativeStateClauses, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
 import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
-import { gamingRegistryLiteralPattern, resolveGamingRegistryGame } from './gamingGameRegistry.js';
+import { gamingApplicabilityAssertionText, gamingRegistryLiteralPattern, resolveGamingRegistryGame } from './gamingGameRegistry.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
@@ -19,6 +19,87 @@ const NUMBERED_ACTION_PREFIX = /^([1-8])[.)]\s+/u;
 const PERIOD_ORDINAL = /^(?:to\s+(?:begin|start)\s+[^.!?;\n,:]{1,180}[,:]\s*)?[1-8]\.$/iu;
 const CONTINUITY_FILLER = new Set('your our their its his her these those them player players commander commanders'.split(' '));
 const AVOIDING_ACTION = /^avoid(?:ing)?\s+/iu;
+const EQUIPMENT_UPGRADE_VERB = '(?:upgrade|reinforce|strengthen|improve)';
+const EQUIPMENT_UPGRADE_WORD = new RegExp(`\\b${EQUIPMENT_UPGRADE_VERB}\\b`, 'iu');
+const EQUIPMENT_UPGRADE_OBJECT = '(?:equipment|gear|armaments?|weapons?|tools?|armou?r)';
+const EQUIPMENT_UPGRADE_PREDICATE = `${EQUIPMENT_UPGRADE_VERB}\\s+(?:(?:your|the|an?)\\s+)?(?<object>${EQUIPMENT_UPGRADE_OBJECT})`;
+const EQUIPMENT_UPGRADE_METHOD = '(?:use|visit|choose|select|spend|pay|bring|take|interact with)\\s+(?<method>[^.!?;\\n]{1,120})';
+const EQUIPMENT_UPGRADE_MEANS_PREFIX = '\\s+(?:at|with|using|via|by)\\s+';
+const EQUIPMENT_UPGRADE_MEANS = '[\\p{L}\\p{N}][^.!?;\\n]{1,120}';
+const EQUIPMENT_UPGRADE_DETAIL = `${EQUIPMENT_UPGRADE_MEANS_PREFIX}(?<method>${EQUIPMENT_UPGRADE_MEANS})`;
+const EQUIPMENT_UPGRADE_WITHHELD_METHOD = /\b(?:at|with|using|via|by)\s+(?:some\s+(?:point|time)|a\s+later\s+(?:point|time)|no\s+(?:(?:clear|known|documented)\s+)?(?:method|instructions?|steps?))\b/iu;
+const GAMEPLAY_FUTURE_RELEASE = /\b(?:coming\s+soon|(?:in|with|after|once)\s+(?:(?:the\s+)?next|a\s+future)\s+(?:update|patch|release|season))\b/iu;
+const EQUIPMENT_UPGRADE_REFERENCE_ONLY = /^(?:(?:using|following|visiting|consulting|reading)\s+)?(?:(?:this|that|the|an?)\s+)?(?:guide|walkthrough|wiki|article|page)(?=\s*(?:$|[.,]|(?:for|on|about|above|below|here)\b))/iu;
+const EQUIPMENT_UPGRADE_UNAVAILABLE_MEANS = /(?:^(?:(?:an?|some|the)\s+)?|\b(?:that|which)\s+(?:is|are|remains?)\s+)(?:(?:still|currently)\s+)?(?:unknown|unavailable|inaccessible|unspecified|undisclosed)\b/iu;
+const EQUIPMENT_UPGRADE_STATEMENTS = [
+  new RegExp(`^(?:you\\s+(?:can|must|should)\\s+)?${EQUIPMENT_UPGRADE_PREDICATE}${EQUIPMENT_UPGRADE_DETAIL}`, 'iu'),
+  new RegExp(`^${EQUIPMENT_UPGRADE_METHOD}\\s+to\\s+${EQUIPMENT_UPGRADE_PREDICATE}(?=\\s*(?:[.!?]|$)|${EQUIPMENT_UPGRADE_MEANS_PREFIX}${EQUIPMENT_UPGRADE_MEANS})`, 'iu'),
+  new RegExp(`^to\\s+${EQUIPMENT_UPGRADE_PREDICATE},\\s*${EQUIPMENT_UPGRADE_METHOD}`, 'iu'),
+  new RegExp(`^[^,.!?;\\n]{1,120}?\\s+(?:lets?\\s+you|allows?\\s+you\\s+to)\\s+${EQUIPMENT_UPGRADE_PREDICATE}${EQUIPMENT_UPGRADE_DETAIL}`, 'iu')
+];
+
+const WATERCRAFT = '(?:boat|ship|ferry)';
+const WATERCRAFT_EXIT = '(?:(?:get|gets|got|getting|step|steps|stepped|stepping|climb|climbs|climbed|climbing|walk|walks|walked|walking)\\s+off|disembark(?:s|ed|ing)?\\s+from)';
+const PLAYER_DISEMBARKATION = new RegExp(`^(?:(?:i\\s+(?:have\\s+)?|i['’]ve\\s+))?(?:just\\s+)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*[.!]?$`, 'iu');
+const DISEMBARKATION_NEXT_QUERY = /^(?:what\s+(?:(?:should|can|do)\s+i\s+do\s+)?(?:next|now)|where\s+(?:should|can|do)\s+i\s+go\s+(?:next|now)|how\s+(?:do|can|should)\s+i\s+(?:continue|proceed))\s*(?=[.!?,;]|$|\band\s+(?:what|where|how|why|which)\b)/iu;
+const DISEMBARKATION_HANDOFF = new RegExp(`^(?:after|once)\\s+(?:you\\s+(?:have\\s+)?)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*(?:(?:at|in|near|outside)\\s+(?![^,.!?;\\n]{0,120}\\b(?:and|or|while|where|when|after|before|during|until|then)\\b)(?<location>[^,.!?;\\n]{1,120}))?,\\s*(?<action>.+)$`, 'iu');
+const HANDOFF_REFERENCE_ONLY = /^(?:(?:you\s+(?:should|must)|next|then)\s+)?(?:read|consult|visit|see|follow|open|check)\s+(?:(?:the|this|that|an?|another)\s+)?(?:(?:separate|other|linked|full|online)\s+)?(?:walkthrough|guide|wiki|article|page)(?=\s*(?:$|[.,]|(?:for|on|here|above|below|linked|elsewhere)\b))/iu;
+const WATERCRAFT_HANDOFF_ACTION = /^(?:(?:you\s+(?:should|must)|next|then)\s+)?(?:drive\s+|(?:get|climb|step)\s+(?:in|into|onto)\s+|(?:walk|run|head)\s+(?:to|towards?|through|past)\s+)\p{L}/iu;
+
+type GamingEquipmentUpgrade = 'equipment' | 'weapons' | 'tools' | 'armor';
+
+function equipmentUpgradeKind(object: string): GamingEquipmentUpgrade {
+  if (/^(?:armaments?|weapons?)$/iu.test(object)) return 'weapons';
+  if (/^tools?$/iu.test(object)) return 'tools';
+  return /^armou?r$/iu.test(object) ? 'armor' : 'equipment';
+}
+
+/** Keep modifiers and named items on the existing exact-topic path. */
+function requestedEquipmentUpgrade(clause: string): GamingEquipmentUpgrade | undefined {
+  const match = new RegExp(`^\\s*(?:please\\s+)?(?:how\\s+(?:(?:do|can|should)\\s+(?:i|we)|to)\\s+)${EQUIPMENT_UPGRADE_VERB}\\s+(?:(?:my|our|the|an?)\\s+)?(${EQUIPMENT_UPGRADE_OBJECT})\\s*[.!?]?$`, 'iu').exec(clause);
+  return match ? equipmentUpgradeKind(match[1]) : undefined;
+}
+
+/** A source needs an affirmative action, its object and a method in one statement. */
+function supportsEquipmentUpgrade(text: string, target: GamingEquipmentUpgrade): boolean {
+  if (text.length > 8_000) return false;
+  const owned = gamingApplicabilityAssertionText(text);
+  return owned.complete && owned.text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(statement => {
+    if (/[?"“”‘`]|\b(?:not|never|unless|if|might|could|would|will|planned|planning|expects?|expected|rumou?rs?|supposedly|reportedly)\b|n['’]t\b/iu.test(statement)) return false;
+    if (EQUIPMENT_UPGRADE_WITHHELD_METHOD.test(statement) || GAMEPLAY_FUTURE_RELEASE.test(statement)) return false;
+    const clause = statement.trim().replace(/^(?:(?:first|then|next)[,:]?\s+|[1-8][.)]\s+)/iu, '')
+      .replace(/^(?:at|in|near|inside)\s+[^,.!?;]{1,120},\s*/iu, '');
+    return EQUIPMENT_UPGRADE_STATEMENTS.some(pattern => {
+      const claim = pattern.exec(clause)?.groups;
+      return Boolean(claim && equipmentUpgradeKind(claim.object) === target
+        && !EQUIPMENT_UPGRADE_REFERENCE_ONLY.test(claim.method.trim())
+        && !EQUIPMENT_UPGRADE_UNAVAILABLE_MEANS.test(claim.method.trim()));
+    });
+  });
+}
+
+/** Recognize a specific player checkpoint without mapping general arrival to disembarkation. */
+function requestedDisembarkation(input: GamingRetrievalPolicyInput): boolean {
+  return input.mode === 'guide' && input.contextOrigins?.progressPoint !== 'tentative'
+    && !input.contextConflicts?.includes('progressPoint')
+    && PLAYER_DISEMBARKATION.test(input.progressPoint?.trim() ?? '')
+    && DISEMBARKATION_NEXT_QUERY.test(gamingTopicalRequest(input.prompt).trim());
+}
+
+/** Keep each affirmative player handoff intact so a bare request cannot pick between distinct routes. */
+export function gamingDisembarkationHandoffs(text: string): string[] {
+  if (text.length > 8_000) return [];
+  const owned = gamingApplicabilityAssertionText(text);
+  if (!owned.complete) return [];
+  return owned.text.split(/\n+|(?<=[.!?])\s+|;\s*/u).flatMap(statement => {
+    if (/[?"“”‘`]|\b(?:not|never|unless|if|might|could|would|will|plans?|planned|planning|expects?|expected|suppose|imagine|rumou?rs?|supposedly|reportedly)\b|n['’]t\b/iu.test(statement)
+      || GAMEPLAY_FUTURE_RELEASE.test(statement)) return [];
+    const handoff = DISEMBARKATION_HANDOFF.exec(statement.trim())?.groups;
+    if (!handoff || HANDOFF_REFERENCE_ONLY.test(handoff.action)) return [];
+    if (!gamingActionInstruction(handoff.action, false) && !WATERCRAFT_HANDOFF_ACTION.test(handoff.action)) return [];
+    return [gamingLexicalTokens(handoff.location ?? '').join(' ') + '\u0000' + gamingLexicalTokens(handoff.action).join(' ')];
+  });
+}
 
 /** Acquisition titles preserve their literal topic terms. */
 function gamingLiteralAcquisitionTitle(prompt: string): boolean {
@@ -182,7 +263,8 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
       if (!/\b(?:guide|source|article|page|evidence|document|section|passage)\b/iu.test(prefix)) return clause;
       const continuation = /,\s*(?:but|however|yet)\b/iu.exec(clause);
       return continuation ? clause.slice(continuation.index) : ' ';
-    });
+    })
+    .replace(/(?:^|(?<=[.!?;]\s)|(?<=\n))[ \t]*no\s+[^.!?;\n]{1,160}?\s+(?:instructions?|steps?|guidance)\s+(?:are|were|is|was)\s+(?:provided|included|given|covered|described)(?=\s*(?:[.!?;\n]|$))/giu, ' ');
   const available = new Set(gamingLexicalTokens(supportingText));
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
 }
@@ -310,6 +392,7 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
         || /^(?:can|could|must|should|may|will|would)\b/iu.test(topic);
       if (topic !== clause && !directPredicate) clause = topic;
     }
+    if (/^(?:after|once)\b/iu.test(clause) && gamingDisembarkationHandoffs(clause).length > 0) return claimText;
     const actionClause = clause.replace(/^(?:do\s+not|don['’]t)\s+/iu, '');
     // A bounded imperative can name the mechanic before its acquired by-action.
     // Preserve a negative imperative as advice; it still cannot prove a start.
@@ -357,7 +440,10 @@ export function gamingAttributableClaimText(text: string, game?: string, metadat
 export function hasGamingRelevantGuideContribution(text: string, input: GamingRetrievalPolicyInput): boolean {
   const generic = new Set('create provide focusing focus recommend recommended recommendation recommendations best good guide build builds early game latest current beginner general advice weapon weapons stat stats armor armour route location configuration allocation'.split(' '));
   const anchors = buildGamingRetrievalTerms(input).focusTerms.filter(term => !generic.has(term));
-  return anchors.length > 0 && gamingTermCoverage(text, anchors) > 0;
+  return anchors.length > 0 && gamingTermCoverage(text, anchors) > 0
+    || input.mode === 'guide' && (EQUIPMENT_UPGRADE_WORD.test(input.prompt) || requestedDisembarkation(input))
+      && buildGamingRequestRequirements(input).some(requirement => isGamingSemanticCoverageRequirement(requirement)
+        && gamingRequirementSupported(gamingAttributableClaimText(text, input.game), requirement));
 }
 
 /** Prefer explicit paragraphs; flattened documents reuse the existing sentence boundary convention. */
@@ -368,7 +454,9 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
   if (!focusTerms.length) return text;
   const units = paragraphs.length > 1 ? paragraphs : splitGamingProse(text, /(?<=[.!?])\s+/u).filter(Boolean);
   if (units.length < 2) return text;
-  const countedStarts = buildGamingRequestRequirements(input).filter(requirement => (requirement.minimumActions ?? 0) > 1);
+  const requirements = buildGamingRequestRequirements(input);
+  const countedStarts = requirements.filter(requirement => (requirement.minimumActions ?? 0) > 1);
+  const semanticRequirements = requirements.filter(isGamingSemanticCoverageRequirement);
   const maxRouteUnits = Math.max(5, ...countedStarts.map(requirement => requirement.minimumActions ?? 1));
   const included = new Set<number>();
   for (const [index, unit] of units.entries()) {
@@ -377,7 +465,8 @@ export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetriev
     if (countedStarts.length && /^[2-8][.)]\s+/u.test(unit.trim())) continue;
     if (countedStarts.length && paragraphs.length === 1 && ORDERED_ACTION_CONTINUATION.test(unit.trim())
       && (unit.length > 8_000 || !countedStarts.some(requirement => gamingStartingActions(unit, requirement.terms) > 0))) continue;
-    if (gamingTermCoverage(unit, focusTerms) === 0) continue;
+    if (gamingTermCoverage(unit, focusTerms) === 0 && !semanticRequirements.some(requirement =>
+      gamingRequirementSupported(gamingAttributableClaimText(unit, input.game), requirement))) continue;
     included.add(index);
     if (index > 0 && /\b(?:prerequisite|requires?|must first|only if)\b/iu.test(units[index - 1])) included.add(index - 1);
     // A paragraph is already a complete source unit; do not infer that the next
@@ -435,6 +524,13 @@ export interface GamingRequestRequirement {
   /** Internal factual constraints; never public authority or source claims. */
   minimumActions?: number;
   relation?: 'materials' | 'acquisition';
+  equipmentUpgrade?: GamingEquipmentUpgrade;
+  disembarkation?: true;
+}
+
+/** These bounded relationships can supply coverage without shared topic tokens. */
+export function isGamingSemanticCoverageRequirement(requirement: GamingRequestRequirement): boolean {
+  return requirement.equipmentUpgrade !== undefined || requirement.disembarkation === true;
 }
 
 /** Identify closed prerequisite/start wording without asserting source support. */
@@ -737,6 +833,8 @@ export function gamingRequirementSupported(text: string, requirement: GamingRequ
     || requirement.minimumActions < 1 || requirement.minimumActions > 8)) return false;
   if (requirement.relation === 'materials') return gamingRequiredMaterials(text, requirement.terms).length > 0;
   if (requirement.relation === 'acquisition') return gamingMaterialAcquisitionSupported(text, requirement.terms);
+  if (requirement.equipmentUpgrade !== undefined) return supportsEquipmentUpgrade(text, requirement.equipmentUpgrade);
+  if (requirement.disembarkation) return gamingDisembarkationHandoffs(text).length > 0;
   if (!requirement.procedure) return gamingTermCoverage(text, requirement.terms) === 1;
   if (requirement.procedure === 'start') return gamingStartingActions(text, requirement.terms) >= (requirement.minimumActions ?? 1);
   return text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(sentence => {
@@ -811,7 +909,7 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
 /** Overflow asks for a narrower scope; it never silently omits requested facts. */
 export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPolicyInput): boolean {
   const { clauses } = gamingRequestClauses(input);
-  return clauses.length > 8 || clauses.some(clause => {
+  return clauses.length + Number(requestedDisembarkation(input)) > 8 || clauses.some(clause => {
     const count = gamingRequestedActionCount(clause);
     return count !== undefined && (count < 1 || count > 8);
   });
@@ -829,17 +927,19 @@ export function gamingRequestScopeUnresolved(input: GamingRetrievalPolicyInput):
 /** Build bounded factual clauses and procedure intents while retaining named topic anchors. */
 export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
   const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
-  if (clauses.length > 8) return [];
+  const disembarkation = requestedDisembarkation(input);
+  if (clauses.length + Number(disembarkation) > 8) return [];
   const subject = gamingScopedRequest(input.prompt).split(/\b(?:including|covering|include|covers?)\s+/iu, 1)[0];
   const genericTerms = new Set('identify list required materials prerequisites requirements actions needed its them concrete ordered'.split(' '));
   const topicTerms = buildGamingClaimCoverageTerms({ game: input.game, prompt: subject }).filter(term => !genericTerms.has(term));
   let hasAtomicTarget = false;
-  const requirements = clauses.map((clause, index) => {
+  const requirements = clauses.map<GamingRequestRequirement>((clause, index) => {
     // Relational question framing describes the requested facts; it is not a
     // word that an independently acquired passage must repeat verbatim.
     const topicalClause = clause.replace(new RegExp(`\\b(?:${GENERIC_RELATIONSHIP_HEADS})\\s+of\\s+`, 'giu'), '');
     const explicitActions = gamingRequestedActionCount(clause);
     const procedure = explicitActions !== undefined ? 'start' as const : gamingProcedureRequest(clause);
+    const equipmentUpgrade = input.mode === 'guide' ? requestedEquipmentUpgrade(topicalClause) : undefined;
     const minimumActions = explicitActions ?? (procedure === 'start' && FIRST_STEPS.test(clause) ? 2 : undefined);
     const relation = /^where\s+(?:can|do)\s+(?:i|we)\s+(?:find|obtain|buy|collect)\s+materials\s+for\b/iu.test(topicalClause.trim()) ? 'acquisition' as const
       : /\bwhat\s+materials\s+do\s+(?:i|we)\s+need\s+for\b|\b(?:identify|list|describe)\s+(?:the\s+)?required\s+materials\b/iu.test(topicalClause) ? 'materials' as const : undefined;
@@ -866,10 +966,16 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
       { label: 'skill selection', words: ['skill', 'selection'] }
     ].find(facet => facet.words.every(word => clauseWords.has(word)));
     return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms, ...(procedure ? { procedure } : {}),
-      ...(minimumActions !== undefined ? { minimumActions } : {}), ...(relation ? { relation } : {}) };
+      ...(minimumActions !== undefined ? { minimumActions } : {}), ...(relation ? { relation } : {}),
+      ...(equipmentUpgrade ? { equipmentUpgrade } : {}) };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
+  if (disembarkation) requirements.push({
+    requirement: 'next action after disembarkation', terms: ['boat'], disembarkation: true
+  });
   // A coordinated target is one atomic request, not two independently supported facts.
-  return (requirements.length > 1 || hasAtomicTarget || hasCoordinatedTarget && requirements.length === 1 || requirements.some(requirement => requirement.procedure || requirement.relation)) && requirements.every(requirement => requirement.terms.length >= 1)
+  return (requirements.length > 1 || hasAtomicTarget || hasCoordinatedTarget && requirements.length === 1
+    || requirements.some(requirement => requirement.procedure || requirement.relation || isGamingSemanticCoverageRequirement(requirement)))
+    && requirements.every(requirement => requirement.terms.length >= 1)
     ? requirements.map((requirement, index) => ({ ...requirement,
       requirement: requirements.filter(entry => entry.requirement === requirement.requirement).length > 1
         ? `${requirement.requirement} (requested topic ${index + 1})` : requirement.requirement })) : [];

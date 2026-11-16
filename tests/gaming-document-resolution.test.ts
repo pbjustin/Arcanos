@@ -73,6 +73,24 @@ describe('shared Gaming document acquisition contract', () => {
     expect(isResolvedGamingDocumentIdentityVerified(altered, openingUrl)).toBe(false);
   });
 
+  it.each(['div', 'hgroup'])('retains acquired ownership through a closed %s heading group', async tag => {
+    const label = 'Game: Grand Theft Auto IV';
+    const grouped = `<header><${tag}><p>${label}</p><h1>${openingHeading}</h1></${tag}></header>`;
+    mockAxiosGet.mockResolvedValue(response(`<article>${grouped}${openingBody}</article>`, 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.metadata.articleScope).toEqual({ label, heading: openingHeading, lead: openingLead });
+    expect(isResolvedGamingDocumentIdentityVerified(document, openingUrl)).toBe(true);
+  });
+
+  it.each([
+    '<div hidden><p>Game: Grand Theft Auto IV</p><h1>The Cousins Bellic</h1></div>',
+    '<div><p>Game: Grand Theft Auto IV</p><h1>The Cousins Bellic</h1></div><p>Unrelated standalone label</p>',
+    '<div><p>Game: Grand Theft Auto IV</p></div><div><h1>The Cousins Bellic</h1></div>'
+  ])('does not combine a label and heading across an unproven heading group', async group => {
+    mockAxiosGet.mockResolvedValue(response(`<article><header>${group}</header>${openingBody}</article>`, 'text/html'));
+    expect((await resolveGamingDocument(openingUrl)).metadata.articleScope).toBeUndefined();
+  });
+
   it('binds article scope through a primary wrapper with a sidebar layout modifier', async () => {
     const html = '<main class="has-sidebar"><article>' + openingHeader + openingBody + '</article>'
       + '<aside class="sidebar"><p>Unrelated sidebar content.</p></aside></main>';

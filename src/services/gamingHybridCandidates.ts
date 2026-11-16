@@ -24,7 +24,7 @@ import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js'
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
 import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, captureGamingSourceAuthorityRestrictionCount,
   type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
-import { assessGamingClearSource, assessGamingClearSourceIdentity, gamingClearScopedArticleText, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText,
+import { assessGamingClearSource, assessGamingClearSourceIdentity, gamingClearScopedArticleText, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText, gamingClearIntactProseText,
   type GamingSourceIdentityDiagnostic } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
@@ -381,10 +381,9 @@ export async function evaluateGamingHybridCandidates(
       // Edition outcomes retain only explicit independent acquired game proof.
       const acquiredIdentity = assessGamingClearSourceIdentity(document, input, policy, v2);
       identityDiagnostic = acquiredIdentity.diagnostic;
-      const openingOnly = acquiredIdentity.reasonCodes.includes('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
-      // The opening proves only the retained passage. It cannot attest the
-      // complete article for ingestion or publisher authority.
-      if (openingOnly) policy = { ...policy, durableAllowed: false, autoStoreAllowed: false };
+      const requiresArticleScope = acquiredIdentity.reasonCodes.includes('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
+      // Passage-scoped corroboration does not attest the complete article for ingestion or publisher authority.
+      if (requiresArticleScope) policy = { ...policy, durableAllowed: false, autoStoreAllowed: false };
       // Storage-only artifacts are kept outside the accepted evidence collection.
       // They share acquisition, owner, TTL, hash and source-use controls, while
       // explicit consent is checked again by the ingestion operation.
@@ -557,8 +556,11 @@ export async function evaluateGamingHybridCandidates(
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
       const applicableText = scoped.status === 'verified' ? scoped.text : intactText;
-      const chunks = await chunkGamingDocument(openingOnly ? gamingClearScopedArticleText(document, applicableText) : applicableText,
-        { signal, evidenceUnits: openingOnly ? [] : scoped.status === 'verified' ? scoped.units : evidenceDocument.evidenceUnits });
+      const applicableProse = requiresArticleScope ? gamingClearIntactProseText(scoped.status === 'verified'
+        ? { ...evidenceDocument, text: scoped.text, evidenceUnits: scoped.units } : evidenceDocument) : undefined;
+      const chunks = await chunkGamingDocument(applicableProse === undefined ? applicableText
+        : gamingClearScopedArticleText(document, applicableProse, input.game),
+        { signal, evidenceUnits: requiresArticleScope ? [] : scoped.status === 'verified' ? scoped.units : evidenceDocument.evidenceUnits });
       callerSignal?.throwIfAborted();
       if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }
       // Use the original acquired headings before display metadata is redacted.
@@ -717,7 +719,15 @@ function isGamingHybridRecordTextBound(record: GamingStoredEvidenceRecord, candi
   const text = typeof record.normalized.text === 'string' ? record.normalized.text : record.searchText;
   if (!candidate.sourceAssessment.dimensionScores.alignment.reasonCodes.includes('ACQUIRED_ARTICLE_SCOPE_IDENTITY'))
     return intactText.includes(text);
-  const scopedText = gamingClearScopedArticleText(candidate.document, intactText);
+  const { document, sourceContext, freshness } = candidate;
+  const gameScoped = selectGamingGameScopedDocument(document, sourceContext.game);
+  if (gameScoped.status === 'conflict' || gameScoped.status === 'unverified') return false;
+  const selected = gameScoped.status === 'projected' ? gameScoped.document : document;
+  const scoped = selectGamingSourceEditionScopedEvidence(selected, sourceContext, freshness.edition);
+  if (scoped.status === 'conflict' || scoped.status === 'unverified' && scoped.reasonCodes.length) return false;
+  const prose = gamingClearIntactProseText(scoped.status === 'verified'
+    ? { ...selected, text: scoped.text, evidenceUnits: scoped.units } : selected);
+  const scopedText = gamingClearScopedArticleText(document, prose, sourceContext.game);
   return Boolean(scopedText && text === scopedText);
 }
 

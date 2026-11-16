@@ -167,16 +167,22 @@ export function readGamingArticleScope($: ReturnType<typeof load>, denied: (elem
   const { article } = owner;
   const isExcluded = (element: cheerio.Element) => gamingArticleNodeExcluded($, element, denied);
   const headers = $(article).children('header');
-  const headings = headers.children('h1');
-  if (headers.length !== 1 || headings.length !== 1) return undefined;
+  if (headers.length !== 1) return undefined;
+  const header = headers.get(0)!;
+  const headerChildren = headers.children();
+  const wrapped = headerChildren.length === 1 && headerChildren.is('div,hgroup') ? headerChildren.get(0) : undefined;
+  if (wrapped && headers.contents().toArray().some(node => node !== wrapped
+    && !(node.type === 'text' && !$(node).text().trim()))) return undefined;
+  const headingGroup = $(wrapped ?? header);
+  const headings = headingGroup.children('h1');
+  if (headings.length !== 1) return undefined;
   const heading = headings.get(0)!;
   const label = headings.prev('div,p,span').get(0);
-  const header = headers.get(0)!;
-  const headerNodes = headers.contents().toArray();
-  if (!label || headers.children().length !== 2 || headers.children().get(0) !== label
-    || headerNodes.some(node => node !== label && node !== heading
+  if (!label || headingGroup.children().length !== 2 || headingGroup.children().get(0) !== label
+    || headingGroup.contents().toArray().some(node => node !== label && node !== heading
       && !(node.type === 'text' && !$(node).text().trim()))
-    || [article, header, heading, label].some(element => !articleElementClosed(element) || isExcluded(element))) return undefined;
+    || [article, header, heading, label, ...(wrapped ? [wrapped] : [])]
+      .some(element => !articleElementClosed(element) || isExcluded(element))) return undefined;
 
   const readText = (element: cheerio.Element, ceiling: number) => {
     const children = $(element).find('*').toArray();

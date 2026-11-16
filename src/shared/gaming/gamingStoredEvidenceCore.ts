@@ -453,6 +453,13 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   const pool = [...unique.values()];
   if (requiredIds.some(id => !pool.some(candidate => candidate.source.sourceId === id))) return [];
   const requirements = buildGamingRequestRequirements(input);
+  // A bare checkpoint can match different routes across the eligible pool.
+  // Choosing one candidate first would hide the need for player clarification.
+  if (requirements.some(requirement => requirement.disembarkation)) {
+    const sourcesByIdentity = new Map(pool.map(({ source }) => [`${source.sourceId}\u0000${source.url}`, source]));
+    if (assessCoverage(input, { context: '', sources: [...sourcesByIdentity.values()],
+      evidence: pool.map(candidate => candidate.evidence) }).gapAssessmentStatus === 'not_assessed') return [];
+  }
   // Clarification gates depend on the request, so no subset can bypass them.
   const requestAssessable = assessCoverage(input, { context: '', sources: [] }).gapAssessmentStatus !== 'not_assessed';
   const focusTerms = buildGamingRetrievalTerms(input).focusTerms;
@@ -597,7 +604,26 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
     visit(index + 1, coverageMask, requiredMask, focusMask, structuralSupport, relevantStructural, shapedStructural, cost);
   };
   if (requestAssessable) visit(0, 0, 0, 0, 0, false, false, 0);
-  if (winner) return winner.candidates;
+  if (winner) {
+    const [passage] = winner.candidates;
+    // A cheap table row can omit the condition the player explicitly asked
+    // about. Prefer a complete, bounded passage in the same acquired revision
+    // when it already passed coverage and retains the requested wording.
+    if (input.mode === 'guide' && !requirements.length && winner.candidates.length === 1
+      && passage.evidence.evidenceUnits?.length) {
+      const condition = /\bwith\s+([^.!?;\n]{1,100})(?=[.!?;]?\s*$)/iu.exec(input.prompt)?.[1];
+      const missing = focusTerms.filter(term => gamingTermCoverage(passage.evidence.text, [term]) === 0);
+      if (condition && gamingTermCoverage(condition, missing) > 0) {
+        const related = entries.find(entry => entry.complete && !entry.hasUnits
+          && entry.candidate.source.sourceId === passage.source.sourceId
+          && entry.candidate.evidence.revisionId === passage.evidence.revisionId
+          && countBits(entry.focusMask) === focusTerms.length
+          && intact([entry.candidate]));
+        if (related) return [related.candidate];
+      }
+    }
+    return winner.candidates;
+  }
 
   // An incomplete request retains useful, bounded passages without claiming a
   // complete cover. Mandatory source identities must still survive formatting.
