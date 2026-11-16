@@ -317,6 +317,45 @@ test('inventory rejects replica or automatic restart settings that could reset p
     assert.throws(() => normalizeLiveValidationInventory(target, raw, { phase: 'predeploy' }), { code: 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID' });
   }
 });
+test('regional replica inventory accepts one explicitly configured replica before deployment and paid admission', () => {
+  const target = targetFixture();
+  for (const phase of ['predeploy', 'paid']) {
+    const raw = inventory(target, phase === 'paid');
+    raw.environment.serviceInstances.edges[0].node.numReplicas = null;
+    raw.environment.config.services[runtimeId].deploy = {
+      restartPolicyType: 'NEVER', numReplicas: null, multiRegionConfig: { 'us-west2': { numReplicas: 1 } }
+    };
+    assert.doesNotThrow(() => normalizeLiveValidationInventory(target, raw, { phase }), phase);
+  }
+});
+test('regional replica inventory rejects missing or contradictory singleton and restart evidence', () => {
+  const target = targetFixture();
+  const singleRegion = { 'us-west2': { numReplicas: 1 } };
+  const cases = [
+    ['null scalar with no regional count', { numReplicas: null }, { multiRegionConfig: null }],
+    ['absent scalar with no regional count', { numReplicas: undefined }, { numReplicas: undefined, multiRegionConfig: undefined }],
+    ['conflicting instance scalar', { numReplicas: 2 }, {}],
+    ['conflicting configured scalar', { numReplicas: 1 }, { numReplicas: 2 }],
+    ['zero configured scalar', {}, { numReplicas: 0 }],
+    ['zero replicas', {}, { multiRegionConfig: { 'us-west2': { numReplicas: 0 } } }],
+    ['two replicas', { numReplicas: 1 }, { multiRegionConfig: { 'us-west2': { numReplicas: 2 } } }],
+    ['empty regional map', { numReplicas: 1 }, { multiRegionConfig: {} }],
+    ['multiple regions', { numReplicas: 1 }, { multiRegionConfig: { ...singleRegion, 'us-east4': { numReplicas: 1 } } }],
+    ['array regional map', { numReplicas: 1 }, { multiRegionConfig: [{ numReplicas: 1 }] }],
+    ['invalid regional entry', {}, { multiRegionConfig: { 'us-west2': null } }],
+    ['missing regional count', {}, { multiRegionConfig: { 'us-west2': {} } }],
+    ['missing instance restart policy', { restartPolicyType: undefined }, {}]
+  ];
+  for (const [label, instanceChanges, deployChanges] of cases) {
+    const raw = inventory(target);
+    Object.assign(raw.environment.serviceInstances.edges[0].node, { numReplicas: null, ...instanceChanges });
+    raw.environment.config.services[runtimeId].deploy = {
+      restartPolicyType: 'NEVER', numReplicas: null, multiRegionConfig: singleRegion, ...deployChanges
+    };
+    assert.throws(() => normalizeLiveValidationInventory(target, raw, { phase: 'predeploy' }),
+      { code: 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID' }, label);
+  }
+});
 test('deployment proof uses observed exact commit metadata and rejects branch labels and foreign IDs', t => {
   const f = fixture(t); assert.doesNotThrow(() => assertLiveValidationDeployment(deployment(f.target), f.target, 'runtime', sha));
   for (const value of [{ ...deployment(f.target), environmentId: LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID },
