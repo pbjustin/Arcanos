@@ -403,12 +403,15 @@ function nodes(connection) {
   return connection.edges.map(edge => edge.node);
 }
 function metadata(value) { return typeof value === 'string' ? json(value, 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID') : value; }
+function hasOneRegionalReplica(regions) {
+  return record(regions) && Object.keys(regions).length === 1
+    && Object.values(regions).every(region => record(region) && region.numReplicas === 1);
+}
 function assertLiveValidationRuntimePolicy(deployment) {
   const deploy = metadata(deployment.meta)?.serviceManifest?.deploy;
   const regions = deploy?.multiRegionConfig;
   requireController(record(deploy) && deploy.restartPolicyType === 'NEVER' && deploy.numReplicas === 1
-    && (regions === undefined || regions === null || record(regions) && Object.keys(regions).length === 1
-      && Object.values(regions).every(region => record(region) && region.numReplicas === 1)),
+    && (regions == null || hasOneRegionalReplica(regions)),
   'LIVE_VALIDATION_RUNTIME_POLICY_INVALID');
 }
 export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' } = {}) {
@@ -431,8 +434,15 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   requireController(Object.keys(config.services).length === 1
     && Object.keys(config.services)[0] === target.runtimeServiceId,
     'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
-  requireController(instances.every(instance => instance.restartPolicyType === 'NEVER' && instance.numReplicas === 1),
-    'LIVE_VALIDATION_RUNTIME_POLICY_INVALID');
+  requireController(instances.every(instance => {
+    const deploy = config.services[instance.serviceId]?.deploy;
+    const regions = deploy?.multiRegionConfig;
+    // Railway may omit the legacy instance count when scaling is configured by region.
+    const oneReplica = regions == null ? instance.numReplicas === 1
+      : (instance.numReplicas == null || instance.numReplicas === 1) && hasOneRegionalReplica(regions);
+    return instance.restartPolicyType === 'NEVER' && oneReplica
+      && (deploy?.numReplicas == null || deploy.numReplicas === 1);
+  }), 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID');
   const networks = raw.privateNetworks;
   requireController(Array.isArray(networks) && networks.length === 1 && !networks[0].deletedAt
     && networks[0].environmentId === target.environmentId && networks[0].projectId === target.projectId,
