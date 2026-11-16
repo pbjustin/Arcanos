@@ -217,7 +217,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
           candidate_artifact="${RUNNER_TEMP}/live-validation-candidate"
           mkdir -m 700 "${candidate_artifact}"
-          git archive --format=tar "${EXPECTED_SHA}" > "${candidate_artifact}/source.tar"
+          git archive --format=tar "${EXPECTED_SHA}" -- . ':(exclude)release/*.zip' > "${candidate_artifact}/source.tar"
           tar -cf "${candidate_artifact}/build.tar" dist packages/protocol/dist packages/cli/dist \
             packages/arcanos-runtime/dist packages/arcanos-openai/dist workers/dist
           node --input-type=module <<'NODE'
@@ -330,20 +330,20 @@ jobs:
           ARTIFACT_DIGEST: ${{ needs.candidate-offline.outputs.artifact_digest }}
         run: |
           node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
           import { lstatSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs';
           import path from 'node:path';
-          import { hashLiveValidationArtifactFile, LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES } from './scripts/live-validation-controller.mjs';
           const e = process.env;
           try {
             const directory = path.join(e.RUNNER_TEMP, 'live-validation-candidate');
-            const names = Object.keys(LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES).sort();
+            const names = ['build.tar', 'candidate-attestation.json', 'source.tar'];
             if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(names)
               || !/^[1-9][0-9]*$/.test(e.ARTIFACT_ID ?? '')
               || !/^[0-9a-f]{64}$/.test(e.ARTIFACT_DIGEST ?? '')) throw new Error('artifact identity');
             for (const name of names) {
               const stat = lstatSync(path.join(directory, name));
               if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1
-                || stat.size > LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES[name]) throw new Error('artifact bounds');
+                || stat.size > (name.endsWith('.json') ? 16_384 : 128 * 1024 * 1024)) throw new Error('artifact bounds');
             }
             const manifest = JSON.parse(readFileSync(path.join(directory, 'candidate-attestation.json'), 'utf8'));
             const keys = ['version', 'repository', 'sourceCommit', 'prNumber', 'profile', 'workflowRunId',
@@ -357,7 +357,7 @@ jobs:
               || !/^[0-9a-f]{40}$/.test(manifest.treeSha ?? '') || !/^[0-9a-f]{64}$/.test(manifest.compiledSha256 ?? '')
               || !manifest.files || Object.keys(manifest.files).sort().join(',') !== 'build.tar,source.tar')
               throw new Error('artifact binding');
-            const hash = name => hashLiveValidationArtifactFile(path.join(directory, name), LIVE_VALIDATION_HOSTED_ARTIFACT_MAX_BYTES[name]);
+            const hash = name => createHash('sha256').update(readFileSync(path.join(directory, name))).digest('hex');
             const files = Object.fromEntries(['source.tar', 'build.tar'].map(name => [name, hash(name)]));
             if (Object.entries(files).some(([name, digest]) => manifest.files[name] !== digest)) throw new Error('artifact digest');
             const binding = { ...manifest, artifactId: e.ARTIFACT_ID, artifactDigest: 'sha256:' + e.ARTIFACT_DIGEST,

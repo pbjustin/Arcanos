@@ -16,7 +16,7 @@
           "question": "What should I do next? Guide: https://www.gta4.tv/gta4/guides/the-cousins-bellic",
           "idempotencyKey": "live-validation-gta-iv-boat-positive",
           "storagePolicy": "transient_only",
-          "progressPoint": "Just got off the boat.",
+          "progressPoint": "Just got off the boat at the beginning.",
           "spoilerTolerance": "light"
         },
         "candidateUrls": [
@@ -46,7 +46,7 @@
           "question": "What should I do next? Use the supplied guide.",
           "idempotencyKey": "live-validation-gta-iv-boat-wrong-game",
           "storagePolicy": "transient_only",
-          "progressPoint": "Just got off the boat.",
+          "progressPoint": "Just got off the boat at the beginning.",
           "spoilerTolerance": "light"
         },
         "candidateUrls": [

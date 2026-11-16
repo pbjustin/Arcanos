@@ -432,6 +432,22 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
   }
 });
 
+test('inventory only counts explicitly stopped deployments as inactive after validating their ownership', () => {
+  const target = targetFixture();
+  const raw = inventory(target, true);
+  const instance = raw.environment.serviceInstances.edges[0].node;
+  const previous = { ...deployment(target, true), id: '66666666-6666-4666-8666-666666666666' };
+  instance.activeDeployments.push(previous);
+  assert.deepEqual(normalizeLiveValidationInventory(target, raw).instances[0].activeDeployments, [instance.latestDeployment]);
+  for (const stopState of [false, null, undefined]) {
+    previous.deploymentStopped = stopState;
+    assert.throws(() => normalizeLiveValidationInventory(target, raw), { code: 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID' });
+  }
+  previous.deploymentStopped = true;
+  previous.environmentId = LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID;
+  assert.throws(() => normalizeLiveValidationInventory(target, raw), { code: 'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH' });
+});
+
 test('live validation and cleanup distinguish stopped deployments from running deployments in Railway inventory', async t => {
   const cases = [
     ['verified stopped entry', {}, 'PASS'],
@@ -446,13 +462,15 @@ test('live validation and cleanup distinguish stopped deployments from running d
     e.railway.inventory = async () => {
       const raw = await readInventory();
       const instance = raw.environment.serviceInstances.edges[0].node;
+      const previous = { ...deployment(f.target, true), id: '66666666-6666-4666-8666-666666666666' };
+      previous.meta.commitHash = trustedSha;
       if (!deployed) {
-        const previous = { ...deployment(f.target, true), id: '66666666-6666-4666-8666-666666666666' };
-        previous.meta.commitHash = trustedSha;
         instance.latestDeployment = previous;
         instance.activeDeployments = [{ ...previous, ...changes }];
       } else if (e.stopped()) {
-        instance.activeDeployments = [instance.latestDeployment];
+        instance.activeDeployments = [previous, instance.latestDeployment];
+      } else {
+        instance.activeDeployments.push(previous);
       }
       return raw;
     };

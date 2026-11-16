@@ -369,43 +369,43 @@ test('trusted artifact binding recomputes opaque bytes and pins source, controll
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });
 
-function sizeCandidateArchive(fixture, name, size) {
-  const archive = path.join(fixture.directory, name);
-  truncateSync(archive, 0);
-  truncateSync(archive, size);
-  const zeroes = Buffer.alloc(1024 * 1024);
-  const digest = createHash('sha256');
-  for (let offset = 0; offset < size; offset += zeroes.length) {
-    digest.update(zeroes.subarray(0, Math.min(zeroes.length, size - offset)));
-  }
-  fixture.manifest.files[name] = digest.digest('hex');
-  writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest));
-}
-
-test('trusted artifact binding accepts a source archive above the old 128 MiB cap', () => {
-  const fixture = candidateFixture();
+test('hosted source archive records the exact commit and omits only release ZIPs', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-source-'));
+  const git = args => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const step = named(offline, 'Record candidate source and build hashes');
+  const command = step.run.split('\n').find(line => line.startsWith('git archive '));
+  assert.ok(command, 'Expected hosted source archive command');
   try {
-    sizeCandidateArchive(fixture, 'source.tar', 128 * 1024 * 1024 + 1);
-    const result = runInline(binding, fixture.env);
+    git(['init', '--template=']);
+    mkdirSync(path.join(directory, 'release'));
+    writeFileSync(path.join(directory, 'release', 'installer.zip'), 'release binary');
+    writeFileSync(path.join(directory, 'release', 'README.md'), 'release notes');
+    writeFileSync(path.join(directory, 'source.ts'), 'const original = true;');
+    git(['add', '.']);
+    git(['-c', 'user.name=Workflow fixture', '-c', 'user.email=fixture@example.invalid',
+      'commit', '--no-gpg-sign', '-m', 'exact source archive fixture']);
+    const commit = git(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(directory, 'source.ts'), 'uncommitted change');
+    const result = spawnSync('bash', ['-c', command], { cwd: directory, encoding: 'utf8',
+      env: { ...baseEnvironment(), EXPECTED_SHA: commit, candidate_artifact: '.' } });
     assert.equal(result.status, 0, result.stderr);
-    const record = JSON.parse(readFileSync(path.join(fixture.root, 'artifact-attestation.json'), 'utf8'));
-    assert.deepEqual(record.files, fixture.manifest.files);
-  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+    const archive = path.join(directory, 'source.tar');
+    assert.equal(execFileSync('git', ['get-tar-commit-id'], { input: readFileSync(archive), encoding: 'utf8' }).trim(), commit);
+    const archived = execFileSync('tar', ['-tf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/);
+    assert.deepEqual(archived, ['release/', 'release/README.md', 'source.ts']);
+    assert.equal(execFileSync('tar', ['-xOf', archive, 'source.ts'], { encoding: 'utf8' }), 'const original = true;');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('trusted artifact binding rejects archives and manifests above their individual limits', () => {
   for (const [name, size] of [
-    ['source.tar', 384 * 1024 * 1024 + 1],
+    ['source.tar', 128 * 1024 * 1024 + 1],
     ['build.tar', 128 * 1024 * 1024 + 1],
-    ['candidate-attestation.json', 16 * 1024 + 1]
+    ['candidate-attestation.json', 16 * 1024 + 1],
   ]) {
     const fixture = candidateFixture();
     try {
-      if (name === 'candidate-attestation.json') {
-        writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest).padEnd(size));
-      } else {
-        sizeCandidateArchive(fixture, name, size);
-      }
+      truncateSync(path.join(fixture.directory, name), size);
       const result = runInline(binding, fixture.env);
       assert.equal(result.status, 1, name);
       assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_ARTIFACT_INVALID', name);
