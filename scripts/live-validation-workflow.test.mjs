@@ -26,6 +26,7 @@ const named = (job, name) => {
   return step;
 };
 const inputStep = named(offline, 'Validate dispatch inputs before candidate checkout');
+const candidateProfile = named(offline, 'Verify the selected profile is in the exact candidate');
 const bootstrap = named(live, 'Materialize protected operator configuration');
 const binding = named(live, 'Bind reviewed SHA to independently hashed candidate artifacts');
 const extractNode = step => {
@@ -36,8 +37,8 @@ const extractNode = step => {
 const baseEnvironment = () => ({ PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C', PR_NUMBER: '42',
   EXPECTED_SHA: SHA, ACCEPTANCE_PROFILE: 'gaming-guide', CONTROLLER_REVISION: CONTROLLER_SHA,
   WORKFLOW_RUN_ID: '1234', WORKFLOW_RUN_ATTEMPT: '1' });
-const runInline = (step, env) => spawnSync(process.execPath, ['--input-type=module'], {
-  input: extractNode(step), encoding: 'utf8', timeout: 5_000, env: { ...baseEnvironment(), ...env },
+const runInline = (step, env, cwd) => spawnSync(process.execPath, ['--input-type=module'], {
+  input: extractNode(step), encoding: 'utf8', timeout: 5_000, env: { ...baseEnvironment(), ...env }, cwd,
 });
 function targetFixture() {
   return { version: 'arcanos-live-validation-target/v2', repository: 'pbjustin/Arcanos',
@@ -57,7 +58,8 @@ test('manual paid admission uses default-branch trust and one Railway HTTPS vali
   const inputs = workflow.on.workflow_dispatch.inputs;
   assert.equal(inputs.pr_number.required, false);
   assert.equal(inputs.expected_sha.required, false);
-  assert.deepEqual(inputs.profile.options, ['gaming-guide']);
+  assert.deepEqual(inputs.profile.options, ['gaming-guide', 'gaming-gta-iv']);
+  assert.equal(inputs.profile.default, 'gaming-guide');
   assert.equal(inputs.paid_authorized.type, 'boolean');
   assert.equal(inputs.paid_authorized.required, true);
   assert.equal(inputs.paid_authorized.default, false);
@@ -81,6 +83,7 @@ test('manual paid admission uses default-branch trust and one Railway HTTPS vali
 
 test('dispatch validation rejects shell-shaped inputs, unknown profiles and workflow reruns before checkout', () => {
   assert.equal(runInline(inputStep).status, 0);
+  assert.equal(runInline(inputStep, { ACCEPTANCE_PROFILE: 'gaming-gta-iv' }).status, 0);
   assert.equal(runInline(inputStep, { EXPECTED_SHA: '' }).status, 0);
   assert.equal(runInline(inputStep, { PR_NUMBER: '' }).status, 0);
   assert.equal(runInline(inputStep, { PR_NUMBER: '', EXPECTED_SHA: '' }).status, 1);
@@ -96,6 +99,37 @@ test('dispatch validation rejects shell-shaped inputs, unknown profiles and work
     if (step.run) assert.doesNotMatch(step.run, /\$\{\{\s*(?:inputs|github\.event)/u);
 });
 
+
+test('candidate profile preflight requires the selected profile at the reviewed SHA before building', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-candidate-profile-'));
+  const profileDirectory = path.join(directory, 'examples', 'live-validation');
+  const git = args => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const commit = () => {
+    git(['add', 'examples']);
+    git(['-c', 'user.name=Workflow fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture']);
+    return git(['rev-parse', 'HEAD']);
+  };
+  const run = (sha, profile) => runInline(candidateProfile, { EXPECTED_SHA: sha, ACCEPTANCE_PROFILE: profile }, directory);
+  try {
+    git(['init']);
+    mkdirSync(profileDirectory, { recursive: true });
+    writeFileSync(path.join(profileDirectory, 'profiles.json'),
+      readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url)));
+    const stock = commit();
+    assert.equal(run(stock, 'gaming-guide').status, 0);
+    const gta = path.join(profileDirectory, 'gta-iv-profiles.json');
+    writeFileSync(gta, readFileSync(new URL('../examples/live-validation/gta-iv-profiles.json', import.meta.url)));
+    const ready = commit();
+    const unavailable = run(stock, 'gaming-gta-iv');
+    assert.equal(unavailable.status, 1);
+    assert.equal(unavailable.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_PROFILE_UNAVAILABLE');
+    assert.equal(run(ready, 'gaming-gta-iv').status, 0);
+    assert.equal(run(ready, 'gaming-guide').status, 0);
+    assert.equal(run(ready, '../gta-iv-profiles.json').status, 1);
+    assert.ok(offline.steps.indexOf(named(offline, 'Verify candidate checkout identity')) < offline.steps.indexOf(candidateProfile));
+    assert.ok(offline.steps.indexOf(candidateProfile) < offline.steps.indexOf(named(offline, 'Install candidate dependencies without live credentials')));
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('authoritative dispatch selection resolves PR-only and SHA-only requests and rejects moved or ambiguous heads', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-selection-'));
@@ -333,6 +367,29 @@ test('trusted artifact binding recomputes opaque bytes and pins source, controll
     assert.equal(record.attestationSha256, createHash('sha256').update(readFileSync(fixture.manifestPath)).digest('hex'));
     assert.equal(statSync(recordPath).mode & 0o777, 0o600);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('trusted artifact binding admits only the exact selected named profile', () => {
+  for (const [manifestProfile, requestedProfile, expectedStatus] of [
+    ['gaming-gta-iv', 'gaming-gta-iv', 0],
+    ['gaming-guide', 'gaming-gta-iv', 1],
+    ['gaming-gta-iv', 'gaming-guide', 1],
+    ['research', 'research', 1],
+  ]) {
+    const fixture = candidateFixture();
+    try {
+      fixture.manifest.profile = manifestProfile;
+      writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest));
+      const result = runInline(binding, { ...fixture.env, ACCEPTANCE_PROFILE: requestedProfile });
+      assert.equal(result.status, expectedStatus, result.stderr);
+      const record = path.join(fixture.root, 'artifact-attestation.json');
+      if (expectedStatus === 0) assert.equal(JSON.parse(readFileSync(record, 'utf8')).profile, requestedProfile);
+      else {
+        assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_ARTIFACT_INVALID');
+        assert.equal(existsSync(record), false);
+      }
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
 });
 
 test('artifact drift, unexpected files, symlinks, reruns and malformed transport hashes fail before admission', () => {

@@ -11,3 +11,10 @@ export function gamingAcquiredGameDeclarationPattern(): RegExp {
 export function withoutGamingAcquiredGameDeclarations(text: string): string {
   return text.replace(gamingAcquiredGameDeclarationPattern(), ' ');
 }
+
+/** A retained copy can replace an acquired declaration only at its own statement boundary. */
+export function hasStandaloneGamingArticleAssertion(text: string, assertion: string): boolean {
+  const literal = assertion.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const end = /[.!?;|]$/u.test(assertion) ? '(?=\\s|$)' : '(?=[ \\t]*(?:[.!?;|\\r\\n]|$))';
+  return new RegExp('(?:^\\s*|[.!?;|]\\s+|[\\r\\n][ \\t]*)' + literal + end, 'u').test(text);
+}

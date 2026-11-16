@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { GamingStoredEvidenceRecord, GamingStoredKnowledgeInput } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
-import { GAMING_FRESHNESS_POLICY_VERSION } from '../../src/shared/gaming/gamingFreshnessCore.js';
+import { GAMING_STORED_APPLICABILITY_VERSION,
+  type GamingStoredEvidenceRecord, type GamingStoredKnowledgeInput } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 export const GAMING_LEXICAL_BENCHMARK_VERSION = 'gaming-lexical-selection/v1';
 export const GAMING_LEXICAL_BENCHMARK_DATE = '2026-11-08T12:00:00.000Z';
@@ -28,7 +28,7 @@ function makeRecord(id: string, game: string, text: string, overrides: Partial<G
     title: `${game} gameplay instructions`, searchText: text, normalized: { text }, contentHash,
     fetchedAt: new Date(GAMING_LEXICAL_BENCHMARK_DATE), publishedAt: new Date('2026-10-01T12:00:00.000Z'),
     provenance: { edition: 'base-game', classification: 'verified', generationEligible: true,
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game,
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game,
         edition: 'base-game', platforms: ['PC'] }, resolverId: 'synthetic-benchmark', resolverVersion: '1' },
     relevance: 1, ...overrides };
 }

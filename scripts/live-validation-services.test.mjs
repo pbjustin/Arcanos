@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import OpenAI from 'openai';
 import { getRequestRemainingMs, runWithRequestAbortTimeout } from '@arcanos/runtime';
@@ -8,10 +9,13 @@ import { createValidationRuntimeApplication, resolveLiveValidationModels,
   LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, validationProfilePassed } from './start-live-validation-runtime.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { validationHash } from './live-validation-bootstrap.mjs';
+import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
 import { sanitizeLiveValidationUsage } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID } from './live-validation-target.mjs';
 
 const profiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8'));
+const root = fileURLToPath(new URL('../', import.meta.url));
+const gtaProfiles = readLiveValidationProfiles(root, 'gaming-gta-iv');
 const id = suffix => '10000000-0000-4000-8000-' + String(suffix).padStart(12, '0');
 const MODEL = 'ft:gpt-6-luna:arcanos:gaming:offline';
 const PRIVATE_PROMPT = 'private-prompt-do-not-project';
@@ -33,6 +37,7 @@ async function request(application, method, url, body, headers = {}, rawHeaders)
 }
 
 function fixture(t, overrides = {}) {
+  const selectedProfiles = overrides.selectedProfiles ?? profiles;
   let clock = Date.now(); const now = () => clock; const testToken = overrides.testToken ?? TOKEN;
   const target = { version: 'arcanos-live-validation-target/v2', repository: 'pbjustin/Arcanos',
     projectId: LIVE_VALIDATION_PROJECT_ID, environmentId: id(1), environmentName: 'live-validation',
@@ -45,7 +50,7 @@ function fixture(t, overrides = {}) {
     treeSha: 'c'.repeat(40), compiledSha256: 'd'.repeat(64) };
   identity.buildManifestSha256 = validationHash(buildManifest);
   const plan = { runId: 'a'.repeat(32), prNumber: 1528, commitSha: identity.sourceCommit,
-    runtimeDeploymentId: identity.deploymentId, profileHash: validationHash(profiles), expiresAtMs: clock + 600_000,
+    runtimeDeploymentId: identity.deploymentId, profileHash: validationHash(selectedProfiles), expiresAtMs: clock + 600_000,
     paidAuthorized: true };
   let providerCalls = 0; let providerCreates = 0; let adapterCreates = 0; let adapterExecutes = 0;
   const seen = []; let context; let lastObservation;
@@ -58,7 +63,7 @@ function fixture(t, overrides = {}) {
         if (result !== undefined) return result;
       }
       observer.onSourceAcquisition('passed');
-      const positive = input.query.idempotencyKey === profiles.profiles.find(value => value.id === POSITIVE).input.query.idempotencyKey;
+      const positive = input.query.idempotencyKey === selectedProfiles.profiles.find(value => value.id === POSITIVE).input.query.idempotencyKey;
       if (!positive) {
         observer.onSourceValidation('rejected');
         lastObservation = { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome: 'need_new_source', semanticGap: 'CONFLICT',
@@ -77,10 +82,10 @@ function fixture(t, overrides = {}) {
       await client.models.retrieve(MODEL);
       await client.responses.create({ model: MODEL, input: PRIVATE_PROMPT, max_output_tokens: 100 });
       lastObservation = { schemaVersion: 2, contractVersion: 'gaming-hybrid-v2', outcome: 'accepted',
-        semanticGap: profiles.profiles.find(value => value.id === POSITIVE).expected.semanticGap, reason: null,
+        semanticGap: selectedProfiles.profiles.find(value => value.id === POSITIVE).expected.semanticGap, reason: null,
         coverage: { satisfied: true, assessmentStatus: 'assessed', missingCount: 0 }, selectedCandidateCount: 1,
         presentation: overrides.unbound ? null : PRESENTATION,
-        selectedEvidenceCount: 1, qualification: { visible: profiles.profiles.find(value => value.id === POSITIVE).expected.qualifiedUnknownPatch === true,
+        selectedEvidenceCount: 1, qualification: { visible: selectedProfiles.profiles.find(value => value.id === POSITIVE).expected.qualifiedUnknownPatch === true,
           patchCompatibility: 'unverified', claimsVerifiedCurrentness: false }, candidates: [], stages: {
           ...Object.fromEntries(['acquisition', 'selection', 'intake', 'reasoning', 'final', 'response'].map(stage => [stage, { status: 'passed', elapsedMs: 1 }])),
           generation: { status: 'passed', elapsedMs: 1 } } };
@@ -95,7 +100,7 @@ function fixture(t, overrides = {}) {
       return result;
     }, getLastObservation: () => lastObservation ? structuredClone(lastObservation) : undefined
   };
-  const runtime = createValidationRuntimeApplication({ target, identity, profiles, buildManifest, now, testToken,
+  const runtime = createValidationRuntimeApplication({ target, identity, profiles, profileSuites: overrides.profileSuites, buildManifest, now, testToken,
     apiKey: overrides.apiKey ?? CREDENTIAL, resolveResponseModelIdentity: async () => body => body.model,
     createProvider: value => {
       providerCreates++;
@@ -119,7 +124,7 @@ function fixture(t, overrides = {}) {
   t.after(() => runtime.close());
   const headers = () => ({ authorization: 'Bearer ' + testToken, 'x-arcanos-source-commit': identity.sourceCommit,
     'x-arcanos-deployment-id': identity.deploymentId });
-  const profile = caseId => profiles.profiles.find(value => value.id === caseId);
+  const profile = caseId => selectedProfiles.profiles.find(value => value.id === caseId);
   const ready = () => request(runtime, 'GET', '/ready', undefined, headers());
   async function admit() {
     assert.equal((await ready()).status, 200);
@@ -154,6 +159,45 @@ test('admission requires exact SHA/deployment, explicit paid authority, approved
   assert.equal(f.counts().providerCreates, 0); assert.equal(f.counts().adapterCreates, 0);
   const wrong = { ...f.headers(), 'x-arcanos-source-commit': 'c'.repeat(40) };
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, wrong)).status, 401);
+});
+
+test('load only fixed checked-in suites and preserve the stock Elite Dangerous profile', () => {
+  assert.deepEqual(LIVE_VALIDATION_PROFILE_NAMES, ['gaming-guide', 'gaming-gta-iv']);
+  assert.deepEqual(readLiveValidationProfiles(root, 'gaming-guide'), profiles);
+  assert.equal(gtaProfiles.profiles[0].input.query.game, 'Grand Theft Auto IV');
+  for (const name of ['../profiles', 'gta-iv-profiles.json', '__proto__', 'unreviewed']) {
+    assert.throws(() => readLiveValidationProfiles(root, name), { code: 'LIVE_VALIDATION_PROFILE_INVALID' });
+  }
+});
+
+test('the GTA IV run binds exact case inputs and rejects another reviewed suite without provider calls', async t => {
+  const f = fixture(t, { selectedProfiles: gtaProfiles, profileSuites: [profiles, gtaProfiles] });
+  await f.ready();
+  const mixedSuite = {
+    ...gtaProfiles, profiles: [profiles.profiles[0], gtaProfiles.profiles[1]]
+  };
+  const denied = await request(f.runtime, 'POST', '/runs', { ...f.plan, profileHash: validationHash(mixedSuite) }, f.headers());
+  assert.equal(denied.body.error.code, 'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH');
+  assert.deepEqual(f.counts(), { providerCalls: 0, providerCreates: 0, adapterCreates: 0, adapterExecutes: 0 });
+
+  await f.admit();
+  for (const entry of profiles.profiles) {
+    const wrongSuite = await f.acceptance(entry.id, { input: entry.input });
+    assert.equal(wrongSuite.body.error.code, 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
+  }
+  const secondAdmission = await request(f.runtime, 'POST', '/runs',
+    { ...f.plan, profileHash: validationHash(profiles) }, f.headers());
+  assert.equal(secondAdmission.body.error.code, 'LIVE_VALIDATION_RUN_ALREADY_CLAIMED_OR_NOT_READY');
+  assert.equal(f.counts().providerCalls, 0);
+  assert.equal(f.counts().adapterExecutes, 0);
+
+  const negative = await f.acceptance(NEGATIVE);
+  assert.equal(negative.body.profilePassed, true);
+  assert.deepEqual(negative.body.providerDelta, { providerCalls: 0, generationCalls: 0, auditCalls: 0 });
+  const positive = await f.acceptance(POSITIVE);
+  assert.equal(positive.body.profilePassed, true);
+  assert.deepEqual(positive.body.providerDelta, { providerCalls: 1, generationCalls: 1, auditCalls: 0 });
+  assert.equal((await request(f.runtime, 'GET', '/usage', undefined, f.headers())).body.profileHash, validationHash(gtaProfiles));
 });
 
 test('missing key can expose exact readiness but never imports the Gaming graph or admits paid execution', async t => {

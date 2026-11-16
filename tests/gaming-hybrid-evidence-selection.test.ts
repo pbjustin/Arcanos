@@ -53,6 +53,59 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selected.selectedCandidateIds).toEqual(['candidate-0']);
   });
 
+  it('requires same-passage support for an explicit operation setting', () => {
+    const row = 'Mechanic: Amber gate | Value: Activate amber gate at the entry panel.';
+    const prose = 'Activate amber gate at the entry panel on the south side of the gatehouse. With manual override enabled, turn the copper switch before activating amber gate. '
+      + 'On the entry panel, wait for the amber indicator to light before crossing the threshold through the gate into the courtyard.';
+    const data = longGuideKnowledge([row, prose]);
+    const fields = [{ label: 'Mechanic', value: 'Amber gate' }, { label: 'Value', value: 'Activate amber gate at the entry panel.' }];
+    const unit: GamingEvidenceUnit = { id: 'gate-mechanic-row', kind: 'table_row', text: row, fields,
+      context: { scope: 'mechanic' }, integrity: { status: 'complete', reasons: [] },
+      provenance: { sourceUrl: data.sources[0].url, strategy: 'html_table', representation: 'html_dom',
+        policyVersion: 'gaming-evidence-units/v1', locator: 'table[0]/tr[0]' } };
+    data.evidence![0].evidenceUnits = [unit];
+    const candidates = data.evidence!.map(evidence => ({ evidence, source: data.sources[0] }));
+    const limits = { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
+    const request = { ...input, prompt: 'How do I activate amber gate with manual override?' };
+    const tableOnly = { ...data, evidence: [data.evidence![0]] };
+    expect(assessGamingRequestCoverage(request, tableOnly).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(request, tableOnly).blockingFindings.map(finding => finding.code))
+      .toContain('QUESTION_COVERAGE_INSUFFICIENT');
+    expect(assessGamingRequestCoverage(request, longGuideKnowledge([row, 'With manual override enabled, turn the copper switch.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request, longGuideKnowledge([row + ' This section lists the manual override setting.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['Activate amber gate at the entry panel. With manual override enabled, open the map.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['With manual override enabled, turn the copper switch before activating amber gate.']))
+      .coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['With manual override enabled, turn the copper switch before activating amber gate if it is ever unlocked.']))
+      .coverageSatisfied).toBe(false);
+    const throttleRequest = { ...input, game: 'Elite Dangerous', prompt: 'How do I use Supercruise Assist with manual throttle?' };
+    expect(assessGamingRequestCoverage(throttleRequest, knowledge([
+      'Select a destination in the Navigation panel and enable Supercruise Assist. With manual throttle enabled, open the map.'
+    ], throttleRequest.game)).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request, { ...data, evidence: [data.evidence![1]] }).coverageSatisfied).toBe(true);
+    const qualifiedValue = 'With manual override enabled, activate amber gate at the entry panel.';
+    const qualifiedRow = row.replace(fields[1].value, qualifiedValue);
+    expect(assessGamingRequestCoverage(request, { ...tableOnly, evidence: [{
+      ...data.evidence![0], text: qualifiedRow,
+      evidenceUnits: [{ ...unit, text: qualifiedRow, fields: [fields[0], { ...fields[1], value: qualifiedValue }] }]
+    }] }).coverageSatisfied).toBe(true);
+    const selection = selectGamingCoverageEvidence(candidates, request, limits, assessGamingRequestCoverage);
+    expect(selection.map(candidate => candidate.evidence.recordId)).toEqual(['record-1']);
+    const splitRevision = [candidates[0], { ...candidates[1], evidence: { ...candidates[1].evidence, revisionId: 'other-revision' } }];
+    expect(selectGamingCoverageEvidence(splitRevision, request, limits, assessGamingRequestCoverage)
+      .map(candidate => candidate.evidence.recordId)).toEqual(['record-1']);
+    const unconditional = { ...request, prompt: 'How do I activate amber gate?' };
+    expect(assessGamingRequestCoverage(unconditional, tableOnly).coverageSatisfied).toBe(true);
+    expect(selectGamingCoverageEvidence(candidates, unconditional, limits, assessGamingRequestCoverage)
+      .map(candidate => candidate.evidence.recordId)).toEqual(['record-0']);
+  });
+
   it('fails closed when the pure v2 selector has no authoritative coverage assessor', () => {
     const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns.']);
     const candidates = [{ source: data.sources[0], evidence: data.evidence![0] }];

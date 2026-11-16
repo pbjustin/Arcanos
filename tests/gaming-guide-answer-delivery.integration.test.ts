@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import { gamingGeneralizationCases } from './testUtils/gamingGeneralizationFixtures.js';
 import {
   colonisationReasoningTasks, colonisationRequest, installedColonisationAnswer, isolatedColonisationAnswer,
   latestLiveColonisationAnswer, malformedColonisationCapabilityParagraph, numberedLiveColonisationAnswer
@@ -40,7 +41,7 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 }));
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
-const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
+const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { discoverGamingSources, createBraveGamingSearchProvider, clearGamingDiscoveryCache } = await import('../src/services/gamingSourceDiscovery.js');
 const { createGamingMcpExecutor } = await import('../src/chatgpt/gaming.js');
@@ -60,7 +61,9 @@ interface Scenario {
   id: string;
   game: string;
   question: string;
-  pages: Array<{ url: string; title: string; body: string }>;
+  progressPoint?: string;
+  spoilerTolerance?: 'light';
+  pages: Array<{ url: string; title: string; body: string; includeTitleHeading?: boolean; afterArticle?: string }>;
   claims: Claim[];
 }
 const frontierGuideUrl = 'https://www.elitedangerous.com/news/system-colonisation-guide';
@@ -110,7 +113,19 @@ const scenarios: Scenario[] = [
     claims: [{ url: 'https://heldout-community.example/ivory-clockwork/rainwheel',
       draft: 'At the Amber Locks, close the east sluice, insert the pearl spindle, and turn the rainwheel twice; wait for the blue water indicator before reopening the sluice.',
       answerProbe: /Amber Locks.*east sluice.*pearl spindle.*twice.*blue water indicator/iu,
-      support: [/Amber Locks/iu, /east sluice/iu, /pearl spindle/iu, /twice/iu, /blue water indicator/iu] }] }
+      support: [/Amber Locks/iu, /east sluice/iu, /pearl spindle/iu, /twice/iu, /blue water indicator/iu] }] },
+  {
+    id: 'gta-iv-opening', game: 'Grand Theft Auto IV', question: 'What should I do next?',
+    progressPoint: 'Just got off the boat at the beginning.', spoilerTolerance: 'light',
+    pages: [{ url: 'https://heldout-guides.example/gta-iv/the-cousins-bellic', title: 'Grand Theft Auto IV walkthrough',
+      // Authored summary of the opening mission, based on the BradyGames guide sample.
+      body: '<h2>The Cousins Bellic</h2><p>In the game Grand Theft Auto IV, the first mission starts at the East Hook docks.</p>'
+        + '<p>After the boat docks at the beginning, drive Roman to Hove Beach. Follow the yellow GPS route to Roman’s apartment, then park in the destination marker.</p>' }],
+    claims: [{ url: 'https://heldout-guides.example/gta-iv/the-cousins-bellic',
+      draft: 'Drive Roman to his apartment in Hove Beach. Follow the yellow GPS route and park in the destination marker.',
+      answerProbe: /Hove Beach.*yellow GPS route.*park/iu,
+      support: [/drive Roman to Hove Beach/iu, /yellow GPS route/iu, /park in the destination marker/iu] }]
+  }
 ];
 
 // Paraphrases of starting facts recorded in the retained Frontier acquisition diagnosis.
@@ -164,7 +179,7 @@ const acquisitionDurations: number[] = [];
 let generationStarted = 0;
 let generationFinished = 0;
 const documents: Awaited<ReturnType<typeof resolveGamingDocument>>[] = [];
-const evaluations: Awaited<ReturnType<typeof evaluateGamingHybridCandidates>>[] = [];
+const evaluations: Array<Awaited<ReturnType<typeof evaluateGamingHybridCandidates>> & { actorKey: string }> = [];
 const environment = { FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:heldout-gaming',
   ARCANOS_GAMING_RAG_ENABLED: 'false', ARCANOS_GAMING_DISCOVERY_ENABLED: 'true',
   ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED: 'false', BRAVE_SEARCH_API_KEY: 'heldout-synthetic-search-only',
@@ -247,7 +262,8 @@ beforeEach(() => {
     const page = scenario.pages.find(value => value.url === publicUrl);
     if (!page) return { status: 404, headers: {}, data: 'No authored fixture exists for this URL.' };
     return { status: 200, headers: { 'content-type': 'text/html' }, data: `<html><title>${page.title}</title><body><article>`
-      + `<h1>${page.title}</h1>${page.body}${sourceSuffix}</article><nav>Related guides for other games</nav></body></html>` };
+      + `${page.includeTitleHeading === false ? '' : `<h1>${page.title}</h1>`}${page.body}${sourceSuffix}</article>${page.afterArticle ?? ''}`
+      + '<nav>Related guides for other games</nav></body></html>' };
   });
   jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
@@ -338,7 +354,7 @@ function harness(backend: boolean) {
         const document = await resolveGamingDocument(url, sourceTextLimit ?? maxTextChars, options); acquisitionDurations.push(performance.now() - started);
         documents.push(document); return document;
       } });
-      evaluations.push(value); return value;
+      evaluations.push({ ...value, actorKey: context.actorKey }); return value;
     } });
   const execute = createGamingMcpExecutor({ hybridQuery: workflow.query, candidates: workflow.candidates, ingestCandidates: workflow.ingest });
   const app = express();
@@ -358,6 +374,8 @@ function harness(backend: boolean) {
     return response.body.result.structuredContent as { statusCode: number; result: GamingHybridResponse };
   }
   const payload = { contractVersion: 'gaming-hybrid-v2', game: scenario.game, question: scenario.question,
+    ...(scenario.progressPoint ? { progressPoint: scenario.progressPoint } : {}),
+    ...(scenario.spoilerTolerance ? { spoilerTolerance: scenario.spoilerTolerance } : {}),
     idempotencyKey: `heldout-query-${scenario.id}`, storagePolicy: 'transient_only' };
   const query = (overrides: Record<string, unknown> = {}) => invoke('arcanos_gaming_hybrid_query', { ...payload, ...overrides }) as Promise<{ statusCode: number; result: GamingHybridResponse }>;
   /** Follow the granted host-search handoff and submit the authored public URLs. */
@@ -440,11 +458,12 @@ describe.each([false])('natural guide request delivery, SYNTHETIC external effec
     expect(result.result.requirementSupport!.length).toBeGreaterThan(0);
     expect(result.result.requirementSupport!.every(link => link.evidenceIds.every(id => result.result.selectedEvidenceIds!.includes(id)))).toBe(true);
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
-    expect(searches).toHaveLength(2); expect(new Set(searches).size).toBe(2);
+    const expectedSearches = fixture.id === 'gta-iv-opening' ? 1 : 2;
+    expect(searches).toHaveLength(expectedSearches); expect(new Set(searches).size).toBe(expectedSearches);
     expect(acquired.sort()).toEqual(fixture.pages.map(page => page.url).sort());
     const callCount = sdk.mock.calls.length;
     expect((await app.query()).result.answer).toEqual(answer);
-    expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(2);
+    expect(sdk).toHaveBeenCalledTimes(callCount); expect(searches).toHaveLength(expectedSearches);
   });
 
   it('delivers awkward but eligible wording without requesting a quality verdict', async () => {
@@ -781,6 +800,449 @@ it.each([
   expect(finalEvidence.length).toBeGreaterThan(0);
 });
 
+describe('GTA IV opening mission controls', () => {
+  const opening = scenarios.find(fixture => fixture.id === 'gta-iv-opening')!;
+  const page = opening.pages[0];
+  const storyLead = "After Niko climbs off the ship in Liberty City, Roman has arrived at the docks to meet him. The city is divided into several boroughs, and this mission begins near the waterfront. To leave the docks, get into Roman's car and drive him to Hove Beach by following the yellow GPS route shown on the minimap. Keep following the route to Roman's apartment, then park in the destination marker to complete the ride.";
+  const storyArticle = {
+    url: 'https://www.gta4.tv/gta4/guides/the-cousins-bellic',
+    title: 'GTA IV - The Cousins Bellic - Story Mission Guide',
+    includeTitleHeading: false,
+    body: '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+      + `<p>${storyLead}</p>`
+  };
+
+  function storyScenario(progressPoint: string, article = storyArticle): Scenario {
+    return { ...opening, progressPoint, pages: [article], claims: [{ ...opening.claims[0],
+      url: article.url,
+      draft: "Get into Roman's car, then drive him to Hove Beach along the yellow GPS route and park in the destination marker.",
+      answerProbe: /Get into Roman's car.*drive him to Hove Beach.*yellow GPS route.*park in the destination marker/iu,
+      support: [/get into Roman's car/iu, /drive him to Hove Beach/iu, /yellow GPS route/iu, /park in the destination marker/iu] }] };
+  }
+
+  async function submit(overrides: Record<string, unknown> = {}) {
+    const app = harness(false);
+    const started = await app.query(overrides);
+    expect(started.result).toMatchObject({ revision: 0, nextAction: 'search' });
+    return app.invoke('arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v2',
+      workflowId: started.result.workflowId, expectedRevision: 0, idempotencyKey: 'gta-iv-opening-submit',
+      discoveryType: 'gameplay_evidence', candidates: [{ url: scenario.pages[0].url }] }) as ReturnType<typeof app.query>;
+  }
+
+  it('retains prose alongside complete and ambiguous records, ignoring related-game navigation', async () => {
+    scenario = opening;
+    sourceSuffix = '<nav><a href="/gta-v">Grand Theft Auto V walkthrough</a><a href="/red-dead">Red Dead Redemption</a></nav>'
+      + '<table><tr><th>Mechanic</th><th>Value</th></tr><tr><td>Parking marker</td><td>Marks the destination.</td></tr></table>'
+      + '<table><tr><th>Value</th><th>Value</th></tr><tr><td>AMBIGUOUS_SENTINEL</td><td>Unknown</td></tr></table>';
+    const result = await submit();
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true });
+    expect(documents[0].structureDiagnostics).toMatchObject({ completeUnits: 1, ambiguousUnits: 1 });
+    const evidence = finalEvidence.map(chunk => chunk.text).join(' ');
+    expect(evidence).toMatch(/drive Roman to Hove Beach/iu);
+    expect(evidence).not.toMatch(/AMBIGUOUS_SENTINEL|Grand Theft Auto V|Red Dead Redemption/iu);
+  });
+
+  it.each(['Just arrived by boat.', 'Just got off the boat at the docks.'])
+  ('acquires the directly scoped GTA IV mission article at progress %s and reports downstream coverage', async progressPoint => {
+    scenario = storyScenario(progressPoint);
+    sourceSuffix = '<aside><h2>Grand Theft Auto V - related walkthrough</h2>'
+      + '<p>Another article mentions a different installment.</p></aside>';
+    const result = await submit();
+    const evaluation = evaluations.at(-1)!;
+    const accepted = evaluation.accepted;
+    fixtureMeasurements.push({ scenario: `gta4-tv-${progressPoint}`, acceptedSources: accepted.length,
+      identity: accepted[0]?.sourceAssessment.gates.identity ?? evaluation.decisions[0]?.reasonCodes,
+      state: result.result.state, reason: result.result.reason, coverageSatisfied: result.result.coverageSatisfied,
+      missingCoverage: result.result.missingCoverage, selectedPassages: result.result.selectedEvidenceIds?.length ?? 0,
+      attemptedUrl: acquired.at(-1), syntheticSdkCalls: sdk.mock.calls.length });
+    expect(documents.at(-1)?.metadata.articleScope).toEqual({ label: 'GTA IV - Story Mission Guide',
+      heading: 'The Cousins Bellic', lead: storyLead });
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].sourceAssessment.gates.identity).toBe('verified');
+    expect(accepted[0].sourceAssessment.gates.security).toBe('verified');
+    expect(accepted[0].sourceAssessment.gates.claimSupport).toBe('verified');
+    expect(result.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true,
+      coverageSatisfied: true, answer: { provenance: 'arcanos-trinity', sources: [{ url: storyArticle.url }] } });
+    expect(result.result.missingCoverage).toEqual([]);
+    expect(result.result.selectedEvidenceIds?.length).toBeGreaterThan(0);
+    const claim = scenario.claims[0];
+    const answer = result.result.answer!;
+    expect(answer.response).toMatch(claim.answerProbe);
+    const answerLine = answer.response.split('\n').find(value => claim.answerProbe.test(value));
+    const sourceIndex = Number(/\[(\d+)\]/u.exec(answerLine ?? '')?.[1]);
+    expect(answer.sources[sourceIndex - 1]?.url).toBe(storyArticle.url);
+    expect(finalEvidence.some(chunk => chunk.sourceIndex === sourceIndex && chunk.url === storyArticle.url
+      && chunk.text.includes(storyLead) && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
+    expect(finalOutputs).toHaveLength(1);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
+  it('reaches a cited next step when the owned opening hands off to an adjoining route section', async () => {
+    const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
+    const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
+    const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.';
+    const article = { ...storyArticle, body: '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+      + '<div class="walkthrough"><h2>Introduction</h2>' + checkpoint + ' ' + driving + '<br>'
+      + '<h2>To The Apartment</h2>' + route
+      + '<h2>Later in the mission</h2><p>Keep the LATER_MISSION_SENTINEL out of the player excerpt.</p></div>' };
+    scenario = storyScenario('Just got off the boat.', article);
+    scenario.claims = [{ url: article.url, draft: 'Drive Roman to his apartment by following the yellow GPS marker.',
+      answerProbe: /Drive Roman to his apartment.*yellow GPS marker/iu,
+      support: [/step off the cargo ship/iu, /drive him back to his apartment/iu, /yellow marker on the radar/iu] }];
+    const result = await submit();
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url: article.url }] } });
+    expect(finalEvidence.some(chunk => chunk.url === article.url
+      && scenario.claims[0].support.every(probe => probe.test(chunk.text)))).toBe(true);
+    expect(finalEvidence.map(chunk => chunk.text).join(' ')).not.toContain('LATER_MISSION_SENTINEL');
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  });
+
+  it('keeps a later GTA V walkthrough heading and its actions out of GTA IV evidence and the answer', async () => {
+    const mixedArticle = { ...storyArticle, body: storyArticle.body
+      + '<h2>GTA V Walkthrough</h2><p>Drive Franklin to the Vinewood sign along the orange route. OTHER_GAME_ACTION_SENTINEL</p>' };
+    scenario = storyScenario('Just arrived by boat.', mixedArticle);
+    const result = await submit();
+    const accepted = evaluations.at(-1)!.accepted;
+    const evidence = finalEvidence.map(chunk => chunk.text).join('\n');
+    expect(documents.at(-1)?.metadata.articleScope).toMatchObject({ label: 'GTA IV - Story Mission Guide',
+      heading: 'The Cousins Bellic', lead: storyLead });
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0].sourceAssessment.gates.identity).toBe('verified');
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url: storyArticle.url }] } });
+    expect(evidence).toContain(storyLead);
+    expect(evidence).not.toMatch(/GTA V Walkthrough|Grand Theft Auto V|Franklin|Vinewood|OTHER_GAME_ACTION_SENTINEL/iu);
+    expect(result.result.answer?.response).not.toMatch(/Grand Theft Auto V|Franklin|Vinewood|OTHER_GAME_ACTION_SENTINEL/iu);
+    expect(result.result.answer?.response).toMatch(scenario.claims[0].answerProbe);
+    expect(finalOutputs).toHaveLength(1);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+  });
+
+  it('withholds next steps when the only acquired walkthrough documents the drive but omits the boat checkpoint', async () => {
+    scenario = { ...opening, progressPoint: 'Just arrived by boat.', pages: [{ ...opening.pages[0],
+      body: '<h2>The Cousins Bellic</h2><p>In the game Grand Theft Auto IV, Roman asks Niko to drive him to Hove Beach. '
+        + 'Follow the yellow GPS route to Roman’s apartment, then park in the destination marker.</p>' }] };
+    const result = await submit();
+    expect(documents.at(-1)?.text).toMatch(/follow the yellow GPS route/iu);
+    expect(result.result).toMatchObject({ reason: 'QUESTION_COVERAGE_INSUFFICIENT', coverageSatisfied: false });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('denies storing the scoped opening without changing its transient source assessment', async () => {
+    scenario = storyScenario('Just arrived by boat.');
+    const result = await submit();
+    expect(result.result.state).toBe('answer_ready');
+    const { accepted: [source], actorKey } = evaluations.at(-1)!;
+    expect(source.sourcePolicy.durableAllowed).toBe(false);
+    const assessment = source.sourceAssessment;
+    const attempt = await createApprovedGamingHybridIngestion({ candidates: [source], storagePolicy: 'ask_before_store',
+      confirmed: true, idempotencyKey: 'test-scoped-opening-storage' }, { actorKey, canStore: true, canAutoStore: false });
+    expect(attempt).toMatchObject({ statusCode: 403, payload: { error: { code: 'GAMING_HYBRID_SOURCE_STORAGE_DISALLOWED' } } });
+    expect(source.sourceAssessment).toBe(assessment);
+  });
+
+  it('keeps an explicit game contradiction blocking after a corroborated opening', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: storyArticle.body
+      + '<p>In Grand Theft Auto V, drive Franklin to the Vinewood sign.</p>' });
+    const result = await submit();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each(['GTA III', 'GTA V'])('rejects a %s scoped version of the same mission heading and entities', async wrongGame => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      title: `${wrongGame} - The Cousins Bellic - Story Mission Guide`,
+      body: storyArticle.body.replace('GTA IV - Story Mission Guide', `${wrongGame} - Story Mission Guide`) });
+    const result = await submit();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(evaluations.at(-1)!.accepted).toHaveLength(0);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('does not borrow GTA IV article scope or entity corroboration from a related sidebar', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: '<h1>Story Mission Guide</h1><p>Drive Roman to his apartment and follow the marked route.</p>' });
+    sourceSuffix = '<aside><header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+      + '<p>Niko arrives in Liberty City, where Roman is waiting for him at the docks.</p></aside>';
+    const result = await submit();
+    expect(documents.at(-1)?.metadata).not.toHaveProperty('articleScope');
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(evaluations.at(-1)!.accepted).toHaveLength(0);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('does not borrow an article scope from a sibling article', async () => {
+    const siblingArticle = {
+      ...storyArticle,
+      title: 'Story Mission Guide',
+      body: '<h1>Story Mission Guide</h1><p>Drive Roman to his apartment and follow the marked route.</p>',
+      afterArticle: '<article><header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+        + '<p>Niko arrives in Liberty City by boat, where Roman is waiting for him at the docks.</p></article>'
+    };
+    scenario = storyScenario('Just arrived by boat.', siblingArticle);
+    const result = await submit();
+    expect(documents.at(-1)?.metadata).not.toHaveProperty('articleScope');
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(evaluations.at(-1)!.accepted).toHaveLength(0);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('rejects an otherwise plausible mission heading when its opening lead does not corroborate the boat arrival', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: storyArticle.body.replace(storyLead,
+        storyLead.replace('After Niko climbs off the ship in Liberty City, Roman has arrived at the docks to meet him.',
+          'Niko arrives in Liberty City, where Roman has arrived at the docks to meet him.')) });
+    const result = await submit();
+    expect(documents.at(-1)?.metadata.articleScope).toMatchObject({ label: 'GTA IV - Story Mission Guide', heading: 'The Cousins Bellic' });
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(evaluations.at(-1)!.accepted).toHaveLength(0);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each(['Red Dead Redemption', 'Grand Theft Auto V'])('withholds %s even though the URL and action text match', async game => {
+    scenario = { ...opening, pages: [{ ...page, title: page.title.replace(opening.game, game),
+      body: page.body.replace(opening.game, game) }] };
+    const result = await submit();
+    expect(evaluations[0].decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('withholds platform-restricted opening instructions on PC', async () => {
+    scenario = opening;
+    sourceSuffix = '<p>This walkthrough applies only to Xbox 360.</p>';
+    const result = await submit({ platform: 'PC' });
+    expect(evaluations[0].decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a named conflicting game', '<p>In the game Grand Theft Auto V, drive Franklin to the Vinewood sign.</p>', 'GAME_MISMATCH'],
+    ['a qualified conflicting game', '<p>This guide covers Grand Theft Auto V training edition.</p>', 'GAME_MISMATCH'],
+    ['a platform restriction', '<p>This walkthrough applies only to Xbox 360.</p>', 'PLATFORM_MISMATCH'],
+  ])('still checks %s in a sibling omitted when the article body is selected', async (_case, restriction, reason) => {
+    const body = storyArticle.body.replace('<p>' + storyLead + '</p>', '<div id="article-body"><p>' + storyLead + '</p></div>');
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: body + '<div>' + restriction + '</div>' });
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.extraction.selectedContainer).toBe('#article-body');
+    expect(documents.at(-1)?.text).not.toMatch(/Franklin|training edition|This walkthrough applies only/iu);
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [reason] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['paragraph under a heading', '<h2>Platform notes</h2><p>This walkthrough applies only to Xbox 360.</p>'],
+    ['bare prose under a heading', '<div><h2>Platform notes</h2>This walkthrough applies only to Xbox 360.</div>'],
+    ['heading without punctuation', '<h2>This walkthrough applies only to Xbox 360</h2><p>Later details follow.</p>'],
+    ['article-owned aside', '<aside><p>This walkthrough applies only to Xbox 360.</p></aside>']
+  ])('rejects a source-wide platform mismatch in an article %s beyond the opening passage', async (_case, restriction) => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: storyArticle.body + restriction });
+    const result = await submit({ platform: 'PC' });
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('accepts matching platform scope and keeps the article qualification out of gameplay evidence', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: storyArticle.body + '<aside><p>This walkthrough applies only to Xbox 360.</p></aside>' });
+    const result = await submit({ platform: 'Xbox 360' });
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
+    expect(finalEvidence.every(chunk => !/applies only to Xbox 360|Platform: Xbox 360/iu.test(chunk.text))).toBe(true);
+  });
+
+  it('does not borrow scope from navigation, quoted asides, or external link text', async () => {
+    const other = '<p>This walkthrough applies only to Xbox 360.</p>';
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle,
+      body: storyArticle.body + '<nav>' + other + '</nav><aside><blockquote>' + other + '</blockquote></aside>'
+        + '<aside><p><a href="https://related-guides.example/other">This walkthrough applies only to Xbox 360.</a></p></aside>' });
+    const result = await submit({ platform: 'PC' });
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
+  });
+
+  it.each([
+    ['statement following an unpunctuated heading', '<div id="article-body">', '</div><h2>Platform notes</h2><p>This walkthrough applies only to Xbox 360.</p>'],
+    ['label before the preferred body', '<p>Platform: Xbox 360</p><div id="article-body">', '</div>']
+  ])('preserves a %s for an independently identified ordinary article', async (_case, prefix, suffix) => {
+    scenario = { ...opening, pages: [{ ...page, body: prefix + page.body + suffix }] };
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.extraction.selectedContainer).toBe('#article-body');
+    expect(documents.at(-1)?.metadata.articleScope).toBeUndefined();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['PLATFORM_MISMATCH'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('does not treat long gameplay prose and ordinary links as incomplete scope declarations', async () => {
+    scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: storyArticle.body
+      + '<p>In phase two, <a href="/story">the next route</a> continues through the borough. '
+      + 'The opening route follows the marked road and avoids unnecessary detours. '.repeat(12)
+      + '</p><aside><p><q>This walkthrough applies only to Xbox 360.</q></p></aside>' });
+    const result = await submit({ platform: 'PC' });
+    expect(documents.at(-1)?.metadata).not.toHaveProperty('applicabilityUnverified');
+    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity' } });
+  });
+
+  it('withholds truncated instructions and a 403 response even with a matching URL', async () => {
+    scenario = opening;
+    sourceTextLimit = 90;
+    const truncated = await submit();
+    expect(documents[0].metrics.truncated).toBe(true);
+    expect(truncated.result.answer).toBeUndefined();
+    publisher.mockResolvedValueOnce({ status: 403, headers: {}, data: 'Forbidden' });
+    const forbidden = await submit();
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['SOURCE_INACCESSIBLE'] });
+    expect(forbidden.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it('withholds a multipart guide when the source only covers the opening drive', async () => {
+    scenario = opening;
+    const result = await submit({ question: 'How do I drive Roman to Hove Beach, and where can I find a rocket launcher?' });
+    expect(result.result).toMatchObject({ coverageSatisfied: false, reason: 'QUESTION_COVERAGE_INSUFFICIENT' });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+});
+
+describe('scoped article corroboration across games through authenticated MCP', () => {
+  interface ScopedGuide {
+    id: string;
+    game: string;
+    foreignGame: string;
+    heading: string;
+    question: string;
+    lead: string;
+    draft: string;
+    probe: RegExp;
+    support: RegExp[];
+  }
+
+  // Authored prose based on Bandai Namco's early-game tips, Nintendo's 2017
+  // combat overview, and the retained Frontier acquisition fixture above.
+  // The protected publisher endpoints below all return synthetic bytes.
+  const guides: ScopedGuide[] = [
+    {
+      id: 'scoped-elden-ring', game: 'Elden Ring', foreignGame: 'Diablo IV', heading: 'Church of Elleh',
+      question: 'How do I upgrade a weapon at the Church of Elleh?',
+      lead: 'At the Church of Elleh, use the Smithing Table and spend Smithing Stones to upgrade an eligible weapon.',
+      draft: 'Use the Smithing Table at the Church of Elleh and spend Smithing Stones to upgrade an eligible weapon.',
+      probe: /Smithing Table.*Church of Elleh.*Smithing Stones.*upgrade an eligible weapon/iu,
+      support: [/Smithing Table/iu, /Church of Elleh/iu, /Smithing Stones/iu, /upgrade an eligible weapon/iu]
+    },
+    {
+      id: 'scoped-xenoblade-2', game: 'Xenoblade Chronicles 2', foreignGame: 'Elden Ring', heading: 'Driver Arts',
+      question: 'How do I recharge Driver Arts?',
+      lead: 'When playing as Rex with Pyra, let his auto-attacks land to recharge Driver Arts.',
+      draft: 'While playing as Rex with Pyra, let his auto-attacks land to recharge Driver Arts.',
+      probe: /Rex with Pyra.*auto-attacks land.*recharge Driver Arts/iu,
+      support: [/Rex with Pyra/iu, /auto-attacks land/iu, /recharge Driver Arts/iu]
+    },
+    {
+      id: 'scoped-elite-dangerous', game: 'Elite Dangerous', foreignGame: 'Portal 2', heading: 'System Colonisation',
+      question: 'How do I begin system colonisation?',
+      lead: 'To begin system colonisation, open the System Colonisation Contact from station services and use the Galaxy Map to select an unpopulated system.',
+      draft: 'Open the System Colonisation Contact from station services. Use the Galaxy Map to select an unpopulated system.',
+      probe: /System Colonisation Contact.*station services.*Galaxy Map.*select an unpopulated system/iu,
+      support: [/System Colonisation Contact/iu, /station services/iu, /Galaxy Map/iu, /select an unpopulated system/iu]
+    }
+  ];
+
+  function scopedScenario(guide: ScopedGuide, labelGame = guide.game, paragraph = '<p>' + guide.lead + '</p>'): Scenario {
+    const url = 'https://heldout-guides.example/scoped/' + guide.id;
+    return {
+      id: guide.id, game: guide.game, question: guide.question, spoilerTolerance: 'light',
+      pages: [{ url, title: guide.heading, includeTitleHeading: false,
+        body: '<header><div>' + labelGame + ' - Guide</div><h1>' + guide.heading + '</h1></header>' + paragraph }],
+      claims: [{ url, draft: guide.draft, answerProbe: guide.probe, support: guide.support }]
+    };
+  }
+
+  async function submitScopedCandidate() {
+    const app = harness(false);
+    const started = await app.query();
+    expect(started.result).toMatchObject({ revision: 0, nextAction: 'search' });
+    return app.invoke('arcanos_gaming_submit_candidates', {
+      contractVersion: 'gaming-hybrid-v2', workflowId: started.result.workflowId, expectedRevision: 0,
+      idempotencyKey: 'submit-' + scenario.id, discoveryType: 'gameplay_evidence',
+      candidates: [{ url: scenario.pages[0].url }]
+    }) as ReturnType<typeof app.query>;
+  }
+
+  it.each(guides)('delivers only the acquired $game lead with a bound citation', async guide => {
+    scenario = scopedScenario(guide);
+    sourceSuffix = '<h2>Later story notes</h2><p>LATER_STORY_SENTINEL. These notes discuss the ending and belong outside this opening.</p>';
+    const result = await harness(false).complete();
+    const evaluation = evaluations.at(-1)!;
+    const url = scenario.pages[0].url;
+    expect(acquired).toEqual([url]);
+    expect(documents.at(-1)?.metadata.articleScope).toEqual({
+      label: guide.game + ' - Guide', heading: guide.heading, lead: guide.lead
+    });
+    expect(documents.at(-1)?.acquisition).toMatchObject({ requestedUrl: url, finalUrl: url });
+    expect(evaluation.decisions).toEqual([expect.objectContaining({ decision: 'accepted_transient', url })]);
+    expect(evaluation.accepted).toHaveLength(1);
+    const [candidate] = evaluation.accepted;
+    expect(candidate.sourceAssessment.gates).toMatchObject({
+      identity: 'verified', claimSupport: 'verified', compatibility: 'verified', provenance: 'verified', security: 'verified'
+    });
+    expect(candidate.sourceAssessment.dimensionScores.alignment.reasonCodes).toContain('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
+    expect(candidate.sourcePolicy).toMatchObject({ authority: 'unreviewed', durableAllowed: false, autoStoreAllowed: false });
+    expect(result).toMatchObject({ statusCode: 200, result: {
+      state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url }] }
+    } });
+    expect(result.result.selectedEvidenceIds).toHaveLength(1);
+    expect(result.result.missingCoverage).toEqual([]);
+    const answer = result.result.answer!;
+    expect(answer.response).toMatch(guide.probe);
+    const sourceNumber = Number(/\[(\d+)\]/u.exec(answer.response)?.[1]);
+    expect(answer.sources[sourceNumber - 1]?.url).toBe(url);
+    const cited = finalEvidence.find(chunk => chunk.sourceIndex === sourceNumber && chunk.url === url);
+    expect(cited?.text).toContain(guide.lead);
+    expect(guide.support.every(probe => probe.test(cited?.text ?? ''))).toBe(true);
+    expect(finalEvidence.map(chunk => chunk.text).join('\n')).not.toContain('LATER_STORY_SENTINEL');
+    expect(answer.response).not.toContain('LATER_STORY_SENTINEL');
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(guides)('rejects the $game lead under a bound $foreignGame scope', async guide => {
+    scenario = scopedScenario(guide, guide.foreignGame);
+    const result = await submitScopedCandidate();
+    expect(documents.at(-1)?.metadata.articleScope).toMatchObject({
+      label: guide.foreignGame + ' - Guide', heading: guide.heading
+    });
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+    expect(evaluations.at(-1)!.accepted).toEqual([]);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each(guides)('does not use a quoted $game lead as identity or gameplay proof', async guide => {
+    scenario = scopedScenario(guide, guide.game, '<blockquote><p>' + guide.lead + '</p></blockquote>');
+    const result = await submitScopedCandidate();
+    expect(documents.at(-1)?.metadata.articleScope).not.toHaveProperty('lead');
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(evaluations.at(-1)!.accepted).toEqual([]);
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+});
+
 it('retains the mandatory coverage gate instead of presenting an unsupported quantity as a qualified answer', async () => {
   scenario = { ...scenarios[2], question: 'How do I get started with system colonisation, including the required quantum crystal quantity?' };
   const result = await harness(false).complete();
@@ -798,6 +1260,69 @@ afterAll(() => {
   }));
 });
 
+describe('held-out Gaming generalization through authenticated MCP', () => {
+  const measurements: Array<Record<string, unknown>> = [];
+  it.each(gamingGeneralizationCases)('measures $scenario.id', async fixture => {
+    scenario = fixture.scenario;
+    if (fixture.truncate) sourceTextLimit = 120;
+    const app = harness(false);
+    const started = performance.now();
+    const initial = await app.query({ ...(fixture.platform ? { platform: fixture.platform } : {}),
+      ...(fixture.edition ? { edition: fixture.edition } : {}) });
+    const result = initial.result.nextAction === 'search' ? await app.invoke('arcanos_gaming_submit_candidates', {
+      contractVersion: 'gaming-hybrid-v2', workflowId: initial.result.workflowId, expectedRevision: initial.result.revision,
+      discoveryType: 'gameplay_evidence', idempotencyKey: 'generalization-candidate-' + scenario.id,
+      candidates: scenario.pages.map(page => ({ url: page.url }))
+    }) as typeof initial : initial;
+    const body = result.result;
+    const selected = finalEvidence.length ? finalEvidence : evaluations.at(-1)?.knowledge.evidence?.map(chunk => ({
+      url: chunk.publicUrl, text: chunk.text, sourceIndex: 0
+    })) ?? [];
+    const supports = (claim: Claim, chunk: { url: string; text: string }) =>
+      claim.url === chunk.url && claim.support.every(probe => probe.test(chunk.text));
+    const expectedClaims = fixture.expected ? scenario.claims : [];
+    const delivered = body.state === 'answer_ready';
+    const cited = expectedClaims.filter(claim => {
+      const line = body.answer?.response.split('\n').find(value => claim.answerProbe.test(value));
+      const index = Number(/\[(\d+)\]/u.exec(line ?? '')?.[1]);
+      return Number.isInteger(index) && index > 0 && body.answer?.sources[index - 1]?.url === claim.url
+        && finalEvidence.some(chunk => chunk.sourceIndex === index && supports(claim, chunk));
+    }).length;
+    const metric = { id: scenario.id, cohorts: fixture.tags, expected: fixture.expected,
+      sourcesAccepted: evaluations.at(-1)?.accepted.length ?? 0, reasons: evaluations.flatMap(value => value.decisions.flatMap(item => item.reasonCodes)),
+      selectedPassages: selected.length, relevantPassages: selected.filter(chunk => expectedClaims.some(claim => supports(claim, chunk))).length,
+      expectedClaims: expectedClaims.length, recalledClaims: expectedClaims.filter(claim => selected.some(chunk => supports(claim, chunk))).length,
+      missingClaimProbes: expectedClaims.flatMap(claim => claim.support.filter(probe => !selected.some(chunk =>
+        chunk.url === claim.url && probe.test(chunk.text))).map(probe => probe.source)),
+      coverage: body.coverageSatisfied === true, coveredRequirements: body.missingCoverage?.length === 0, delivered,
+      claimsCited: cited, unsupportedDelivery: delivered && (!fixture.expected || cited !== expectedClaims.length),
+      approvedFixtureAnswer: fixture.expected && delivered && cited === expectedClaims.length && finalOutputs.length === 1,
+      stages: [...stages], simulatedProviderCalls: sdk.mock.calls.length, elapsedMs: +(performance.now() - started).toFixed(2) };
+    measurements.push(metric);
+    if (process.env.ARCANOS_GAMING_GENERALIZATION_BASELINE === '1') return;
+    // This authored page has the right answer, but its standalone game label
+    // does not yet establish ownership of the nested mission article.
+    if (scenario.id.startsWith('gta-opening-layout-')) {
+      expect(metric).toMatchObject({ sourcesAccepted: 0, coverage: false, delivered: false, simulatedProviderCalls: 0 });
+      expect(metric.reasons).toContain('GAME_IDENTITY_UNVERIFIED');
+      return;
+    }
+    if (fixture.expected) {
+      expect(metric).toMatchObject({ coverage: true, approvedFixtureAnswer: true, unsupportedDelivery: false });
+      expect(metric.stages).toEqual(['intake', 'reasoning', 'final']);
+    } else {
+      expect(metric).toMatchObject({ delivered: false, coverage: false, simulatedProviderCalls: 0 });
+      if (fixture.tags.includes('wrong-game') || fixture.tags.includes('wrong-installment')) expect(metric.sourcesAccepted).toBe(0);
+    }
+  });
+  afterAll(() => {
+    if (process.env.ARCANOS_GAMING_GENERALIZATION_BASELINE !== '1' && process.env.ARCANOS_GAMING_GENERALIZATION_REPORT !== '1') return;
+    console.info('GAMING_GENERALIZATION_METRICS ' + JSON.stringify({
+      evidence: 'authored external transport and provider fixtures through the actual authenticated Gaming workflow',
+      realProviderCalls: 0, realProviderCostUsd: 0, cases: measurements
+    }));
+  });
+});
 
 /** Build authored procedural evidence; none of these pages represents a publisher capture. */
 function proceduralScenario(question: string, prose: string, claims: Claim[]): Scenario {

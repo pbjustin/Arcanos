@@ -34,6 +34,15 @@ describe('request-scoped Gaming lexical retrieval policy', () => {
       .toEqual({ requestTerms: [], contextTerms: ['copper', 'quay', 'repair', 'signal', 'bell'], focusTerms: ['copper', 'quay', 'repair', 'signal', 'bell'] });
   });
 
+  test('ignores conversational recency while retaining the directional progress anchor', () => {
+    const input = { game: 'Grand Theft Auto IV', prompt: 'What should I do next?', progressPoint: 'Just got off the boat at the beginning.' };
+    expect(buildGamingRetrievalTerms(input).focusTerms).toEqual(['got', 'off', 'boat', 'beginning']);
+    expect(buildGamingRetrievalTerms({ ...input, progressPoint: 'Just arrived by boat' }).focusTerms).toEqual(['arrived', 'boat']);
+    expect(buildGamingRetrievalTerms({ ...input, progressPoint: 'Just Cause Arena' }).focusTerms).toEqual(['just', 'cause', 'arena']);
+    expect(buildGamingRetrievalTerms({ ...input, progressPoint: undefined, currentArea: 'Just Arrived Pier' }).focusTerms)
+      .toEqual(['just', 'arrived', 'pier']);
+  });
+
   test.each(['No spoilers.', 'Keep it short.', 'Spoilers allowed.', 'Make it detailed, without spoilers.'])('keeps presentation preference %s out of progression acquisition', preference => {
     const terms = buildGamingRetrievalTerms({ prompt: `What next? ${preference}`, game: 'Lantern Voyage', currentArea: 'Copper Quay' });
     expect(terms.requestTerms).toEqual([]);

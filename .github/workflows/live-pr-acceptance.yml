@@ -20,6 +20,7 @@ on:
         type: choice
         options:
           - gaming-guide
+          - gaming-gta-iv
         default: gaming-guide
       paid_authorized:
         description: Authorize the bounded paid run after offline validation
@@ -72,7 +73,7 @@ jobs:
             || (e.EXPECTED_SHA && !/^[0-9a-f]{40}$/.test(e.EXPECTED_SHA))
             || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_REVISION ?? '')
             || !/^[1-9][0-9]*$/.test(e.WORKFLOW_RUN_ID ?? '')
-            || e.WORKFLOW_RUN_ATTEMPT !== '1' || e.ACCEPTANCE_PROFILE !== 'gaming-guide') {
+            || e.WORKFLOW_RUN_ATTEMPT !== '1' || !['gaming-guide', 'gaming-gta-iv'].includes(e.ACCEPTANCE_PROFILE)) {
             console.error('LIVE_VALIDATION_DISPATCH_INVALID');
             process.exitCode = 1;
           }
@@ -127,6 +128,30 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
           test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Verify the selected profile is in the exact candidate
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const e = process.env;
+          const files = new Map([
+            ['gaming-guide', 'examples/live-validation/profiles.json'],
+            ['gaming-gta-iv', 'examples/live-validation/gta-iv-profiles.json']
+          ]);
+          try {
+            const file = files.get(e.ACCEPTANCE_PROFILE);
+            if (!file || !/^[0-9a-f]{40}$/.test(e.EXPECTED_SHA ?? ''))
+              throw new Error('candidate profile identity');
+            const profile = JSON.parse(execFileSync('git', ['show', e.EXPECTED_SHA + ':' + file],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16_384 }));
+            if (profile?.version !== 2 || profile.acceptanceProfile !== 'grounded-presented-answer-v2'
+              || !Array.isArray(profile.profiles) || profile.profiles.length !== 2)
+              throw new Error('candidate profile format');
+          } catch {
+            console.error('LIVE_VALIDATION_CANDIDATE_PROFILE_UNAVAILABLE');
+            process.exitCode = 1;
+          }
+          NODE
 
       - name: Install verified secret scanner
         shell: bash
@@ -326,7 +351,7 @@ jobs:
             if (!manifest || Object.keys(manifest).length !== keys.length || keys.some(key => !Object.hasOwn(manifest, key))
               || manifest.version !== 1 || manifest.repository !== 'pbjustin/Arcanos'
               || manifest.sourceCommit !== e.EXPECTED_SHA || manifest.prNumber !== Number(e.PR_NUMBER)
-              || manifest.profile !== 'gaming-guide' || manifest.profile !== e.ACCEPTANCE_PROFILE
+              || !['gaming-guide', 'gaming-gta-iv'].includes(manifest.profile) || manifest.profile !== e.ACCEPTANCE_PROFILE
               || manifest.workflowRunId !== e.WORKFLOW_RUN_ID || manifest.workflowRunAttempt !== 1
               || e.WORKFLOW_RUN_ATTEMPT !== '1' || manifest.controllerRevision !== e.CONTROLLER_REVISION
               || !/^[0-9a-f]{40}$/.test(manifest.treeSha ?? '') || !/^[0-9a-f]{64}$/.test(manifest.compiledSha256 ?? '')

@@ -78,3 +78,21 @@ describe('request edition display identity', () => {
     expect(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition })).toBe('base-game');
   });
 });
+
+describe('explicit base scope for registered games without a default edition', () => {
+  test.each([
+    ['Grand Theft Auto IV', 'Give me a base-game walkthrough for the opening route.'],
+    ['Xenoblade Chronicles 2', 'Explain the base game combat route.']
+  ])('resolves an explicit base-game request for %s', (game, prompt) => {
+    expect(resolveGamingRequestEdition({ game, prompt })).toBe('base-game');
+  });
+
+  test.each([
+    ['Grand Theft Auto IV', 'What should I do next?'],
+    ['Xenoblade Chronicles 2', 'How do Driver Arts work?'],
+    ['Grand Theft Auto IV', 'The submitted guide is titled "Grand Theft Auto IV base-game walkthrough". What should I do next?'],
+    ['Xenoblade Chronicles 2', 'How does the base game compare with DLC?']
+  ])('does not infer base scope for %s from unspecified, attributed, or mixed edition wording', (game, prompt) => {
+    expect(resolveGamingRequestEdition({ game, prompt })).toBeUndefined();
+  });
+});
