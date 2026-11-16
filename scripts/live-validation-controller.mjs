@@ -9,6 +9,7 @@ import { extractLivePreviewNumericCitations, sanitizeLivePreviewEvidence, saniti
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
+import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
 import { LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES, LIVE_VALIDATION_METADATA_RESERVED_CODES } from './live-validation-provider.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -117,7 +118,7 @@ export function parseLiveValidationControllerArguments(argv) {
   }
   requireController((args.prNumber !== undefined || args.commitSha !== undefined)
     && (args.prNumber === undefined || /^[1-9][0-9]*$/u.test(args.prNumber) && integer(Number(args.prNumber), 1))
-    && (args.commitSha === undefined || SHA.test(args.commitSha) && args.commitSha !== '0'.repeat(40)) && args.profile === 'gaming-guide'
+    && (args.commitSha === undefined || SHA.test(args.commitSha) && args.commitSha !== '0'.repeat(40)) && LIVE_VALIDATION_PROFILE_NAMES.includes(args.profile)
     && path.isAbsolute(args.targetFile ?? '') && path.isAbsolute(args.evidenceDirectory ?? ''), 'LIVE_VALIDATION_ARGUMENT_INVALID');
   if (args.prNumber !== undefined) args.prNumber = Number(args.prNumber);
   for (const [key, cap] of Object.entries(LIVE_VALIDATION_HARD_LIMITS)) {
@@ -840,8 +841,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   const artifact = args.operatorBootstrap
     ? validateLiveValidationOperatorArtifact(binding, { args, git, raw: artifactRaw, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY })
     : validateLiveValidationArtifact(binding, { args, git, environment, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY });
-  const profiles = dependencies.readProfiles ? dependencies.readProfiles(root)
-    : json(readFileSync(path.join(root, 'examples/live-validation/profiles.json'), 'utf8'), 'LIVE_VALIDATION_PROFILE_INVALID');
+  const profiles = (dependencies.readProfiles ?? readLiveValidationProfiles)(root, args.profile);
   requireController(profiles.version === 2 && profiles.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
     && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
     && PROFILE_IDS.every((id, index) => profiles.profiles[index]?.id === id)

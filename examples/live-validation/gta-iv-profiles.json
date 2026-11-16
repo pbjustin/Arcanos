@@ -1,0 +1,63 @@
+{
+  "version": 2,
+  "acceptanceProfile": "grounded-presented-answer-v2",
+  "sourceReachability": "unverified",
+  "profiles": [
+    {
+      "id": "gaming-guide-positive",
+      "scenarioId": "gta-iv-opening-boat-publisher-guide",
+      "caseId": "useful_grounded_guide",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Grand Theft Auto IV",
+          "mode": "guide",
+          "question": "What should I do next? Guide: https://www.gta4.tv/gta4/guides/the-cousins-bellic",
+          "idempotencyKey": "live-validation-gta-iv-boat-positive",
+          "storagePolicy": "transient_only",
+          "progressPoint": "Just got off the boat.",
+          "spoilerTolerance": "light"
+        },
+        "candidateUrls": [
+          "https://www.gta4.tv/gta4/guides/the-cousins-bellic"
+        ]
+      },
+      "expected": {
+        "outcome": "accepted",
+        "semanticGap": "NONE",
+        "requiredModelStages": [
+          "intake",
+          "reasoning",
+          "final"
+        ]
+      }
+    },
+    {
+      "id": "gaming-guide-negative",
+      "scenarioId": "gta-iv-wrong-game-authored-control",
+      "caseId": "incompatible_source",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Grand Theft Auto IV",
+          "mode": "guide",
+          "question": "What should I do next? Use the supplied guide.",
+          "idempotencyKey": "live-validation-gta-iv-boat-wrong-game",
+          "storagePolicy": "transient_only",
+          "progressPoint": "Just got off the boat.",
+          "spoilerTolerance": "light"
+        },
+        "candidateUrls": [
+          "https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-sekiro-conflict-guide.html"
+        ]
+      },
+      "expected": {
+        "outcome": "need_new_source",
+        "semanticGap": "CONFLICT",
+        "providerCalls": 0
+      }
+    }
+  ]
+}
