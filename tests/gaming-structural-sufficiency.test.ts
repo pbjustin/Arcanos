@@ -2,12 +2,11 @@ import { describe, expect, it } from '@jest/globals';
 import type { GamingEvidenceUnit } from '../src/shared/gaming/gamingEvidenceUnits.js';
 import type { ResolvedGamingDocument } from '../src/services/gamingDocumentResolution.js';
 import { assessGamingClearSource, gamingClearIntactSourceText } from '../src/shared/gaming/gamingClearSource.js';
-import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '../src/shared/gaming/gamingStructuralEvidence.js';
 import { chunkGamingDocument, hashGamingDocumentRevision } from '../src/services/gamingDurableDocumentChunks.js';
-import { formatStoredGamingEvidence, selectStoredGamingEvidence, GAMING_STORED_APPLICABILITY_VERSION,
-  type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { formatStoredGamingEvidence, selectStoredGamingEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
 
 const now = new Date('2026-09-10T12:00:00Z');
@@ -263,7 +262,7 @@ describe('claim-specific structural scope and ordinary retrieval', () => {
     const candidates = selectStoredGamingEvidence([{ gameName: 'Testspace', recordId: 'record', recordType: 'guide', title: 'Testspace', searchText: chunk.text,
       normalized: { text: chunk.text, evidenceUnits: chunk.evidenceUnits, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: chunk.text.length } },
       sourceId: 'source', publicUrl: url, sourceType: 'unreviewed', revisionId: 'revision', contentHash, fetchedAt: now, publishedAt: null,
-      provenance: { acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game: applicability.game,
+      provenance: { acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
         ...(applicability.edition ? { edition: applicability.edition } : {}),
         ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
         ...(applicability.regions?.length ? { regions: applicability.regions } : {}),

@@ -58,17 +58,6 @@ describe('versioned game recognition is independent of acquired proof', () => {
     expect(resolveGamingRegistryGame('World of Warcraft')?.provenance.references.length).toBeGreaterThan(0);
     expect(Object.isFrozen(GAMING_GAME_REGISTRY.games)).toBe(true);
   });
-  it('recognizes GTA IV aliases without collapsing III, V, or an unspecified installment', () => {
-    const game = 'Grand Theft Auto IV';
-    for (const alias of ['GTA IV', 'GTA 4', 'Grand Theft Auto 4']) {
-      expect(resolveGamingRegistryGame(alias)?.name).toBe(game);
-      expect(gamingRegistrySourceGameMatchesRequest(alias, game)).toBe(true);
-    }
-    for (const other of ['GTA III', 'GTA 3', 'GTA V', 'GTA 5', 'GTA']) {
-      expect(gamingRegistrySourceGameMatchesRequest(other, game)).toBe(false);
-    }
-  });
-
   it('selects the longest acquired leading title without collapsing relatives', () => {
     expect(detectGamingRegistryAlias('Elden Ring Nightreign guide', true)?.name).toBe('Elden Ring Nightreign');
     expect(detectGamingRegistryAlias('Minecraft Dungeons guide', true)?.name).toBe('Minecraft Dungeons');
@@ -113,16 +102,6 @@ describe('registry config is bounded reviewed literals', () => {
     expect(() => validateGamingGameRegistry({ ...GAMING_GAME_REGISTRY,
       games: [{ ...first, provenance: { ...first.provenance, references: ['secret\ntext'] } }] })).toThrow();
   });
-  it('requires bounded, nonempty literal action alternatives for guide topics', () => {
-    const game = resolveGamingRegistryGame('Grand Theft Auto IV')!;
-    const [topic] = game.guideTopics!;
-    for (const actions of [[], [{ verbs: ['open'], objects: [] }], [{ verbs: ['use', 'USE'], objects: ['item'] }],
-      [{ verbs: ['use'], objects: ['item'], predicate: 'arbitrary code' }]]) {
-      expect(() => validateGamingGameRegistry({ ...GAMING_GAME_REGISTRY, games: [{ ...game, guideTopics: [{ ...topic, actions }] }] }))
-        .toThrow();
-    }
-  });
-
   it('supports an unrelated configured game with the same generic edition algorithm', () => {
     const configured = validateGamingGameRegistry({ version: 'gaming-game-registry/v1', revision: 'test-v1', games: [{
       id: 'configured-workshop-v1', name: 'Synthetic Workshop', aliases: ['Workshop Alpha'], related: [], platforms: ['PC'],

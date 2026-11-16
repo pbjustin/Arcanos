@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals
 import { Client, Pool } from 'pg';
 import type { PersistGamingSourceRevisionInput } from '../../src/core/db/repositories/gamingSourceRepository.js';
 import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } from '../../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_STORED_APPLICABILITY_VERSION } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { GAMING_FRESHNESS_POLICY_VERSION } from '../../src/shared/gaming/gamingFreshnessCore.js';
 import { assertDisposablePostgresTestDatabaseUrl, POSTGRES_TEST_DATABASE_NAME, resolvePostgresTestDatabaseUrl } from './postgresTestDatabase.js';
 
 const databaseEnvironment = 'JOB_CLAIM_FENCING_TEST_DATABASE_URL';
@@ -43,7 +43,7 @@ function approvedProvenance() {
   expect(assessment.qualityEligible).toBe(true);
   return { classification: 'verified', generationEligible: true, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
     gamingClear: assessment, approvedContentHash: approvedDocumentHash, hybridPolicyVersion: 'gaming-hybrid-candidates/v1',
-    acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: digest(text), game: request.game,
+    acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: digest(text), game: request.game,
       metadataConflict: false, metadataUnverified: false } };
 }
 

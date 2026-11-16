@@ -23,7 +23,6 @@ import {
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { gamingSourceRequiresAuthorityReassessment } from '@shared/gaming/gamingSourceAuthority.js';
-import { GAMING_STORED_APPLICABILITY_VERSION } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { assessGamingClearSourceIdentity, gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
@@ -1510,7 +1509,7 @@ async function ingestOneSource(
             ...(applicability.metadataUnverified ? ['APPLICABILITY_UNVERIFIED'] : []),
             ...(source.retainedApproval ? ['RETAINED_WITHOUT_GENERATION_APPROVAL'] : [])].slice(0, 8);
     const acquiredApplicability = {
-      extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game: applicability.game,
+      extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
       ...(applicability.edition ? { edition: applicability.edition } : {}),
       ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
       ...(applicability.regions?.length ? { regions: applicability.regions } : {}),
@@ -1528,7 +1527,7 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
-      acquiredApplicabilityVersion: GAMING_STORED_APPLICABILITY_VERSION,
+      acquiredApplicabilityVersion: GAMING_FRESHNESS_POLICY_VERSION,
       sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
       classification, generationEligible,
       ...(source.retainedApproval ? { retainedRecordType: recordType } : {}),

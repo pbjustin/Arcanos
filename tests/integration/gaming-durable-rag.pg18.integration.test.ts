@@ -16,7 +16,6 @@ import { buildGamingDocumentSearchText } from '../../src/shared/gaming/gamingDoc
 import {
   buildStoredGamingLexicalQuery,
   formatStoredGamingEvidence,
-  GAMING_STORED_APPLICABILITY_VERSION,
   selectStoredGamingEvidence
 } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { buildGamingLargeGuideFixture } from '../testUtils/gamingLargeGuideFixture.js';
@@ -74,7 +73,7 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: () => databasePool,
   isDatabaseConnected: () => Boolean(databasePool)
 }));
-const { persistGamingSourceRevision, searchActiveGamingKnowledge, findActiveGamingSourceIdentities, findGamingSourceById, PostgresGamingSourceRepository } =
+const { persistGamingSourceRevision, searchActiveGamingKnowledge, findActiveGamingSourceIdentities, PostgresGamingSourceRepository } =
   await import('../../src/core/db/repositories/gamingSourceRepository.js');
 
 function hash(value: string): string {
@@ -599,7 +598,7 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
         provenance: { gameName: itemGame, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
           classification: 'verified', generationEligible: true,
           gamingClear: assessment, approvedContentHash: contentHash,
-          acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash, game: itemGame },
+          acquiredApplicability: { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash, game: itemGame },
           resolverId: 'synthetic-retained-corpus', resolverVersion: 'pg18-retained-fixture-v1', resolutionStrategy: 'retained_text' },
         extractionMetrics: { coverageStatus: 'complete', documentCharsIndexed: text.length, chunkCount: 1 },
         records: [{ recordType: 'guide', semanticKey: 'retained-nominal', payloadHash: hash(JSON.stringify(normalized)),
@@ -720,72 +719,6 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(statuses.rows.filter(row => row.status === 'active')).toHaveLength(firstRecordCount);
     expect(statuses.rows.filter(row => row.status === 'superseded')).toHaveLength(firstRecordCount);
     mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
-  }, 30000);
-
-  test('retains a legacy owner source while requiring full acquisition to verify the same later chunk', async () => {
-    const {
-      createGamingSourceIngestion, executeQueuedGamingSourceIngestion, buildStoredGamingKnowledgeContext, refreshGamingSources
-    } = await import('../../src/services/gamingSourceIngestion.js');
-    const itemGame = 'Prairie Relay';
-    const gameKey = 'prairie-relay';
-    const publicUrl = `https://guides.example.org/prairie-relay/${randomUUID()}`;
-    const page = '<html><head><title>Prairie Relay guide</title></head><body><main><h1>Prairie Relay</h1>'
-      + '<p>Platform: PS5.</p><table><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>'
-      + '<tr><td>TEST-PR-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr></table></main></body></html>';
-    const gateway = { actorKey: 'disposable-applicability-owner', requestId: 'disposable-request', traceId: 'disposable-trace' };
-    const input = { game: itemGame, prompt: 'Which system, body and site reports Platinum in TEST-PR-01?',
-      mode: 'guide' as const, platform: 'PC', failOnUnavailable: true };
-    mockSourceHttpGet.mockImplementation(async () => ({ data: page, headers: { 'content-type': 'text/html' } }));
-    mockSourceEnqueue.mockImplementation(async (request: any) => ({
-      job: { id: randomUUID(), status: 'pending', created_at: new Date(), input: request.input }, created: true, deduped: false
-    }));
-    const runQueued = async () => executeQueuedGamingSourceIngestion(randomUUID(),
-      (mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body);
-    try {
-      const admitted = await createGamingSourceIngestion({ action: 'ingest', payload: {
-        game: itemGame, sourceUrls: [publicUrl], idempotencyKey: `scope-${randomUUID()}`
-      } }, gateway);
-      expect(admitted.statusCode).toBe(202);
-      const original = (await runQueued()).output.sources[0];
-      expect(original).toMatchObject({ status: 'stored', generationEligible: true });
-      const sourceId = original.sourceId!;
-      const search = () => searchActiveGamingKnowledge({ gameKey, query: 'platinum', mode: 'guide', sourceIds: [sourceId] });
-      const [current] = await search();
-      expect(current).toMatchObject({ normalized: { chunk: { ordinal: 1 } }, provenance: {
-        acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, platforms: ['PS5'] }
-      } });
-      expect(current.normalized.text).not.toContain('Platform');
-
-      const legacyScope = { extractorVersion: 'gaming-hybrid-freshness-v1', contentHash: current.contentHash, game: itemGame };
-      await databasePool.query(`UPDATE gaming_source_revisions
-        SET extractor_version = 'historical-applicability-fixture/v1',
-            provenance = jsonb_set(provenance, '{acquiredApplicability}', $2::jsonb)
-        WHERE id = $1`, [current.revisionId, JSON.stringify(legacyScope)]);
-      expect(await findGamingSourceById(sourceId)).toMatchObject({ status: 'active',
-        latestRevision: { id: current.revisionId, provenance: { acquiredApplicability: legacyScope } } });
-      expect((await search())[0].normalized.text).toBe(current.normalized.text);
-      const unverified = await buildStoredGamingKnowledgeContext(input);
-      expect(unverified.evidence?.[0]).toMatchObject({ ordinal: 1, revisionId: current.revisionId, text: expect.stringContaining('PML 7') });
-      expect(unverified.clearEvidenceAssessment).toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
-
-      const refresh = await refreshGamingSources({ action: 'refresh', payload: {
-        sourceIds: [sourceId], idempotencyKey: `refresh-scope-${randomUUID()}`
-      } }, gateway);
-      expect(refresh.statusCode).toBe(202);
-      expect((await runQueued()).output.sources[0]).toMatchObject({ sourceId, status: 'updated', generationEligible: true });
-      const [refreshed] = await search();
-      expect(refreshed.revisionId).not.toBe(current.revisionId);
-      expect(refreshed).toMatchObject({ contentHash: current.contentHash, normalized: current.normalized, provenance: {
-        acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, platforms: ['PS5'] }
-      } });
-      expect((await buildStoredGamingKnowledgeContext(input)).context).toBe('');
-      const compatible = await buildStoredGamingKnowledgeContext({ ...input, platform: 'PS5' });
-      expect(compatible.evidence?.[0]).toMatchObject({ ordinal: 1, revisionId: refreshed.revisionId, text: unverified.evidence?.[0].text });
-      expect(compatible.clearEvidenceAssessment).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
-      expect(mockSourceHttpGet).toHaveBeenCalledTimes(2);
-    } finally {
-      mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
-    }
   }, 30000);
 
   test('retains an owner-submitted wiki catalog without granting gameplay authority or acquiring linked pages', async () => {

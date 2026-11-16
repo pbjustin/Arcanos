@@ -92,6 +92,7 @@ describe('Gaming agent routing model', () => {
   });
 
   it.each([
+    ['Elite Dangerous exploration guide', 'guide', 'Elite Dangerous'],
     ['Factorio progression guide', 'guide', 'Factorio'],
     ['Hollow Knight boss guide', 'guide', 'Hollow Knight'],
     ['Caves of Qud build request', 'build', 'Caves of Qud'],
@@ -108,14 +109,6 @@ describe('Gaming agent routing model', () => {
     }));
     expect(intent.gameDetectionConfidence).toBeGreaterThanOrEqual(0.8);
     expect(intent.routingSignals).toContain('detected_game');
-    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
-  });
-
-  it('routes a registered Elite Dangerous title as a known game', () => {
-    const intent = IntentRouterAgent.classify({ prompt: 'Elite Dangerous exploration guide' });
-
-    expect(intent).toMatchObject({ mode: 'guide', game: 'Elite Dangerous', gameDetectionSource: 'alias' });
-    expect(intent.routingSignals).toContain('known_game');
     expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
   });
 

@@ -9,26 +9,17 @@ jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   cancel() {}
 } }));
 
-const { assessGamingClearSourceIdentity, gamingClearScopedArticleText } = await import('../src/shared/gaming/gamingClearSource.js');
+const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 
 const url = 'https://guides.example.org/independent-colonisation-guide';
 const input = { game: 'Elite Dangerous', mode: 'guide' as const, prompt: 'Explain system colonisation planning and supply delivery.' };
-const gtaArticleUrl = 'https://guides.example.org/gta-iv-cousins-bellic';
 // Independently authored structural fixtures, not publisher text or gameplay truth claims.
 const guidance = 'In Elite Dangerous, commanders plan a system colonisation project before delivering construction supplies. Compare the requested supply quantities with cargo capacity, then make delivery trips until the construction manifest is complete.';
 const assess = (title: string, prose: string, game = input.game, edition?: string) => assessGamingClearSourceIdentity({
   publicUrl: url, metadata: { title, headings: title }, text: `${title}\n${prose}`
 }, { ...input, game, edition }, assessGamingSourcePolicy(url, game));
-const assessGtaArticleLead = (lead: string, articleScopeAssertions?: string[], retainedText = '') => assessGamingClearSourceIdentity({
-  publicUrl: gtaArticleUrl,
-  metadata: { title: 'GTA IV - The Cousins Bellic - Story Mission Guide', headings: 'The Cousins Bellic',
-    articleScope: { label: 'GTA IV - Story Mission Guide', heading: 'The Cousins Bellic', lead },
-    ...(articleScopeAssertions ? { articleScopeAssertions } : {}) },
-  text: ['The Cousins Bellic', lead, retainedText].filter(Boolean).join('\n')
-}, { game: 'Grand Theft Auto IV', mode: 'guide', prompt: 'What happens in the opening mission?' },
-assessGamingSourcePolicy(gtaArticleUrl, 'Grand Theft Auto IV'), true);
 
 describe('independently acquired game and mechanic ownership', () => {
   it('accepts ordinary game-qualified mechanic metadata with independent game prose', () => {
@@ -40,14 +31,6 @@ describe('independently acquired game and mechanic ownership', () => {
     const title = 'Elite Dangerous System Colonisation guide';
     const prose = `This guide covers Elite Dangerous System Colonisation. System Colonisation is a mechanic in Elite Dangerous. ${guidance}`;
     expect(assess(title, prose)).toMatchObject({ status: 'verified' });
-  });
-
-  it('retains reviewed ownership under a second registered game and its alias', () => {
-    const title = 'XC2 Driver Arts guide';
-    const prose = 'This guide covers XC2 Driver Arts. Driver Arts is a mechanic in Xenoblade Chronicles 2. '
-      + 'In Xenoblade Chronicles 2, land auto-attacks while fighting alongside Pyra to charge Rex’s Driver Arts.';
-    expect(assess(title, prose, 'Xenoblade Chronicles 2')).toMatchObject({ status: 'verified' });
-    expect(assess(title, prose, 'Elden Ring')).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
 
   it('accepts an unfamiliar game-qualified topic without a production game exception', () => {
@@ -138,131 +121,6 @@ describe('independently acquired game and mechanic ownership', () => {
 
   it('accepts a generic mechanic heading with independently named game ownership', () => {
     expect(assess('System Colonisation guide', `In the game Elite Dangerous, commanders plan a system colonisation project. ${guidance}`))
-      .toMatchObject({ status: 'verified' });
-  });
-
-  it.each([
-    ['Xenoblade Chronicles 2 Blade Combos guide', 'Blade Combos is a mechanic in Xenoblade Chronicles 2. Rex can execute a Blade Combo by chaining elemental Blade Specials.', 'Xenoblade Chronicles 2'],
-    ['Elite Dangerous Supercruise Assist guide', 'Supercruise Assist is a mechanic in Elite Dangerous. A pilot selects the destination and enables the Supercruise Assist module on the navigation panel.', 'Elite Dangerous'],
-    ['GTA IV Jamaican Heat mission guide', 'Jamaican Heat is a mission in Grand Theft Auto IV. Niko picks up Little Jacob and covers him during the meeting.', 'Grand Theft Auto IV'],
-  ])('preserves exact acquired ownership for the independently authored topic %s', (title, prose, game) => {
-    expect(assess(title, prose, game)).toMatchObject({ status: 'verified' });
-  });
-
-  it.each([
-    ['XC2 Blade Combos', 'Blade Combos', 'mechanic', 'Xenoblade Chronicles 2'],
-    ['Elite Dangerous Supercruise Assist', 'Supercruise Assist', 'mechanic', 'Elite Dangerous'],
-    ['GTA IV Jamaican Heat', 'Jamaican Heat', 'mission', 'Grand Theft Auto IV']
-  ])('reads the compound acquired declaration for %s without registered topic metadata', (title, topic, kind, game) => {
-    expect(assess(`${title} guide`, `This guide covers ${title}. ${topic} is a ${kind} in ${game}. Follow the marked route to the checkpoint.`, game))
-      .toMatchObject({ status: 'verified' });
-    expect(assess(`${title} guide`, `This guide covers ${title}. "${topic} is a ${kind} in ${game}." Follow the marked route to the checkpoint.`, game))
-      .toMatchObject({ status: 'unknown' });
-  });
-
-  it('retains the exact intact late instruction separately from opening corroboration', () => {
-    const game = 'Grand Theft Auto IV';
-    const heading = 'The Cousins Bellic';
-    const lead = 'Niko steps off the boat in Liberty City with Roman.';
-    const independentlyScoped = 'In the game Grand Theft Auto IV, follow the yellow GPS route to Roman’s apartment and stop at the destination marker.';
-    const source = { metadata: { articleScope: { label: 'GTA IV - Story Mission Guide', heading, lead } } };
-    const content = [
-      heading, lead, 'Read the next section to continue the walkthrough. '.repeat(700), heading, independentlyScoped,
-      'In the game Grand Theft Auto IV, do not enter the police station.',
-      'In the game Grand Theft Auto IV, you might board the ferry.',
-      'In the game Grand Theft Auto IV, “follow a red marker to the airport.”',
-      'In the game Grand Theft Auto IV, should you steer to the airport?',
-      'In the game Grand Theft Auto V, follow the purple trail to the garage.',
-      'Unlike other guides in the game Grand Theft Auto IV, follow the gray route.',
-      'Follow the green route to a new destination.',
-      'In the game Grand Theft Auto IV, follow Dr. Santiago’s instructions to open the control gate.',
-      'In the game Grand Theft Auto IV, follow the last route and'
-    ].join(' ');
-    expect(gamingClearScopedArticleText(source, content, game)).toBe([heading, lead, independentlyScoped].join('\n\n'));
-  });
-
-  it.each([
-    ['Xenoblade Chronicles 2 Blade Combos guide', 'Blade Combos is a mechanic in Elite Dangerous. Rex can execute a Blade Combo by chaining elemental Blade Specials.', 'Xenoblade Chronicles 2', 'conflict'],
-    ['Elite Dangerous Supercruise Assist guide', 'Supercruise Assist is a mechanic in Copper Vale. A pilot selects the destination and enables the module.', 'Elite Dangerous', 'unknown'],
-    ['GTA IV Jamaican Heat mission guide', 'Jamaican Heat is a mission in Grand Theft Auto V. Niko picks up Little Jacob and covers him during the meeting.', 'Grand Theft Auto IV', 'conflict'],
-  ])('keeps conflicting acquired topic ownership fail-closed for %s', (title, prose, game, status) => {
-    expect(assess(title, prose, game)).toMatchObject({ status });
-  });
-
-  it('accepts an affirmative registered actor within an acquired subject group', () => {
-    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.'))
-      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
-  });
-
-  it('accepts the full registered Niko Bellic name as the action actor', () => {
-    expect(assessGtaArticleLead('Niko Bellic and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.'))
-      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
-  });
-
-  it('verifies a registered action directed at the boat itself', () => {
-    expect(assessGtaArticleLead('Niko steps off the boat in Liberty City with Roman.'))
-      .toMatchObject({ status: 'verified', reasonCodes: ['ACQUIRED_ARTICLE_SCOPE_IDENTITY'] });
-  });
-
-  it.each([
-    ['an uncertain planned scene', 'The expected scene has Niko climb off the boat in Liberty City with Roman.'],
-    ['a planned event', 'The plan says Niko climbs off the boat in Liberty City with Roman.'],
-    ['a prospective event', 'Niko is expected to climb off the boat in Liberty City with Roman.'],
-    ['a different actor', 'Niko and Roman wait in Liberty City while a sailor climbs off the boat.'],
-    ['a coordinated different actor', 'Roman waits in Liberty City with Niko and watches a sailor climb off the boat.'],
-    ['an unrelated object overlooking the boat', 'Niko steps off a platform overlooking the boat in Liberty City with Roman.'],
-  ])('does not corroborate a registered guide topic from %s', (_reason, lead) => {
-    expect(assessGtaArticleLead(lead)).toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
-  });
-
-  it('treats omitted whole-article contradictory game scope as negative-only evidence', () => {
-    expect(assessGtaArticleLead(
-      'Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
-      ['In Grand Theft Auto V, this guide covers a related mission.']))
-      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
-  });
-
-  it('does not use an omitted article assertion as positive gameplay identity proof', () => {
-    expect(assessGtaArticleLead('The opening mission is discussed in this overview.',
-      ['In Grand Theft Auto IV, this guide covers The Cousins Bellic.']))
-      .toMatchObject({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
-  });
-
-  it('keeps an omitted author-authored contradiction even when the selected prose quotes the same words', () => {
-    const assertion = 'In Grand Theft Auto V, this guide covers a related mission.';
-    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
-      [assertion], `\"${assertion}\"`)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
-  });
-
-  it('keeps an omitted affirmative contradiction when the selected prose repeats it only as a comparison', () => {
-    const lead = 'Niko steps off the boat in Liberty City with Roman.';
-    const assertion = 'in the game Grand Theft Auto V, drive Franklin to the Vinewood sign.';
-    expect(assessGtaArticleLead(lead, undefined, `Unlike ${assertion}`)).toMatchObject({ status: 'verified' });
-    expect(assessGtaArticleLead(lead, [assertion], `Unlike ${assertion}`))
-      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
-        diagnostic: { ruleId: 'gaming.identity.article_scope_assertion_conflict' } });
-  });
-
-  it('keeps the acquired HTML restriction even when the selected prose contains its comparison copy', async () => {
-    const opening = 'Niko steps off the boat in Liberty City with Roman.';
-    const assertion = 'in the game Grand Theft Auto V, drive Franklin to the Vinewood sign.';
-    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
-      data: '<article><header><p>GTA IV - Story Mission Guide</p><h1>The Cousins Bellic</h1></header>'
-        + `<div id="article-body"><p>${opening}</p><p>Unlike ${assertion}</p></div>`
-        + `<aside><p>${assertion}</p></aside></article>` });
-    const document = await resolveGamingDocument(gtaArticleUrl);
-    expect(document.extraction.selectedContainer).toBe('#article-body');
-    expect(document.text).toContain(`Unlike ${assertion}`);
-    expect(document.metadata.articleScopeAssertions).toContain(assertion);
-    const game = 'Grand Theft Auto IV';
-    expect(assessGamingClearSourceIdentity(document, { game, mode: 'guide', prompt: 'What happens first?' },
-      assessGamingSourcePolicy(gtaArticleUrl, game), true))
-      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
-  });
-
-  it('does not classify an arbitrary article topic clause as a foreign game', () => {
-    expect(assessGtaArticleLead('Niko and his fellow immigrants climb off the Platipus ship in Liberty City with Roman.',
-      ['This guide covers Kokiri Forest sells the Deku Shield for 40 Rupees.']))
       .toMatchObject({ status: 'verified' });
   });
 

@@ -1,10 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import { extractGamingDocumentEvidence } from '../src/services/gamingDocumentEvidence.js';
-import { selectStoredGamingEvidence, formatStoredGamingEvidence, GAMING_STORED_APPLICABILITY_VERSION,
-  type GamingStoredEvidenceRecord } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { selectStoredGamingEvidence, formatStoredGamingEvidence, type GamingStoredEvidenceRecord } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
 import { createGamingClearAssessment, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
-import { extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const url = 'https://guides.example.org/mixed-game-statistics';
 const input = { game: 'Portal 2', edition: 'base-game', mode: 'guide' as const, prompt: 'What is Practice Blade damage?' };
@@ -160,36 +159,7 @@ describe('generic stored source scope after durable ingestion', () => {
       .toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
   });
 
-  it('requires the full-source applicability policy before trusting an unchanged later chunk', () => {
-    const stored = record(input.game);
-    const text = stored.normalized.text as string;
-    const original = { publicUrl: url, text: `Platform: PS5.\n\n${text}`, evidenceUnits: stored.normalized.evidenceUnits as any[] };
-    stored.contentHash = gamingClearHash(original);
-    stored.normalized.chunk = { ordinal: 1, startChar: original.text.length - text.length, endChar: original.text.length, totalChunks: 2 };
-    stored.provenance.acquiredApplicability = { extractorVersion: 'gaming-hybrid-freshness-v1',
-      contentHash: stored.contentHash, game: input.game };
-    const pc = { ...input, platform: 'PC' };
-    const old = formatStoredGamingEvidence(selectStoredGamingEvidence([stored], pc, limits), pc, limits);
-    expect(old.evidence?.[0]).toMatchObject({ ordinal: 1, recordId: stored.recordId });
-    expect(assessGamingClearEvidence(pc, old)).toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
-
-    const applicability = extractGamingFreshnessMetadata(original, input, stored.fetchedAt, []);
-    expect(applicability.platforms).toEqual(['PS5']);
-    const refreshed = { ...stored, revisionId: 'refreshed-revision', provenance: { acquiredApplicability: {
-      extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: stored.contentHash, game: applicability.game,
-      platforms: applicability.platforms
-    } } };
-    expect(selectStoredGamingEvidence([refreshed], pc, limits)).toEqual([]);
-    const ps5 = { ...input, platform: 'PS5' };
-    const compatible = formatStoredGamingEvidence(selectStoredGamingEvidence([refreshed], ps5, limits), ps5, limits);
-    expect(compatible.evidence?.[0]).toMatchObject({ ordinal: 1, recordId: stored.recordId, revisionId: refreshed.revisionId });
-    expect(compatible.evidence?.[0].text).toEqual(old.evidence?.[0].text);
-    expect(assessGamingClearEvidence(ps5, compatible)).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
-  });
-
-  it.each([
-    ['unverified', false], ['unverified', true], ['legacy', true], ['missing', true]
-  ] as const)('retains %s acquired scope without granting CLEAR acceptance or reusing older hybrid scope (hybrid approval: %s)', (scope, hybrid) => {
+  it.each([false, true])('retains bounded acquired uncertainty without granting CLEAR acceptance or reusing older hybrid scope: %s', hybrid => {
     const stored = record(input.game);
     const document = { publicUrl: url, text: `${'A synthetic route follows the copper gate. '.repeat(850)}\nPlatform: PS5\n${stored.normalized.text}`,
       evidenceUnits: stored.normalized.evidenceUnits as any[] };
@@ -197,9 +167,8 @@ describe('generic stored source scope after durable ingestion', () => {
     expect(applicability.metadataUnverified).toBe(true);
     expect(applicability.metadataConflict).toBeUndefined();
     stored.contentHash = gamingClearHash(document);
-    if (scope !== 'missing') stored.provenance.acquiredApplicability = {
-      extractorVersion: scope === 'legacy' ? 'gaming-hybrid-freshness-v1' : GAMING_STORED_APPLICABILITY_VERSION,
-      contentHash: stored.contentHash, game: applicability.game, ...(scope === 'unverified' ? { metadataUnverified: true } : {}) };
+    stored.provenance.acquiredApplicability = { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION,
+      contentHash: stored.contentHash, game: applicability.game, metadataUnverified: true };
     if (hybrid) {
       const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_PRIOR_ASSESSMENT'],
         evidenceRefs: ['stored-source'], unresolvedFacts: [] };
@@ -225,7 +194,7 @@ describe('generic stored source scope after durable ingestion', () => {
   ])('does not promote malformed or unbound acquired applicability: %j', invalid => {
     const stored = record(input.game);
     stored.contentHash = 'a'.repeat(64);
-    stored.provenance.acquiredApplicability = { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION,
+    stored.provenance.acquiredApplicability = { extractorVersion: 'gaming-hybrid-freshness-v1',
       contentHash: stored.contentHash, game: input.game, ...invalid };
     const selected = selectStoredGamingEvidence([stored], input, limits);
     expect(selected).toHaveLength(1);
