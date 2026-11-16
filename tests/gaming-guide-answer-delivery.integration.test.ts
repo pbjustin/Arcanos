@@ -1006,13 +1006,14 @@ describe('GTA IV opening mission controls', () => {
 
   it.each([
     ['a named conflicting game', '<p>In the game Grand Theft Auto V, drive Franklin to the Vinewood sign.</p>', 'GAME_MISMATCH'],
+    ['a qualified conflicting game', '<p>This guide covers Grand Theft Auto V training edition.</p>', 'GAME_MISMATCH'],
     ['a platform restriction', '<p>This walkthrough applies only to Xbox 360.</p>', 'PLATFORM_MISMATCH'],
   ])('still checks %s in a sibling omitted when the article body is selected', async (_case, restriction, reason) => {
     const body = storyArticle.body.replace('<p>' + storyLead + '</p>', '<div id="article-body"><p>' + storyLead + '</p></div>');
     scenario = storyScenario('Just arrived by boat.', { ...storyArticle, body: body + '<div>' + restriction + '</div>' });
     const result = await submit({ platform: 'PC' });
     expect(documents.at(-1)?.extraction.selectedContainer).toBe('#article-body');
-    expect(documents.at(-1)?.text).not.toMatch(/Franklin|This walkthrough applies only/iu);
+    expect(documents.at(-1)?.text).not.toMatch(/Franklin|training edition|This walkthrough applies only/iu);
     expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [reason] });
     expect(result.result.answer).toBeUndefined();
     expect(sdk).not.toHaveBeenCalled();

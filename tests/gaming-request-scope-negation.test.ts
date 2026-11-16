@@ -80,4 +80,44 @@ describe('explicit base-game and negative expansion request scope', () => {
     expect(resolveGamingRequestEdition(input)).toBeUndefined();
     expect(gamingRequestTargetsExtraContent(input)).toBe(true);
   });
+
+  test.each([
+    'The supplied guide says it covers the base game, but explain DLC combat.',
+    'The supplied guide says it covers the base game, but please explain DLC combat.',
+    'The supplied guide says it covers the base game, but can you explain DLC combat?'
+  ])('preserves an independent DLC request following a source description for %s', prompt => {
+    const input = { game: 'Xenoblade Chronicles 2', prompt };
+    const edition = resolveGamingRequestEdition(input);
+    expect(edition).toBeUndefined();
+    expect(gamingRequestTargetsExtraContent(input)).toBe(true);
+    expect(gamingEditionEvidenceMatchesRequest(undefined, edition, input)).toBe(false);
+  });
+
+  test.each([
+    'The supplied guide says it covers the base game, but also includes DLC combat. Explain combat.',
+    'The supplied guide is titled "The Base Game, but Explain DLC Combat". Explain combat.',
+    'The supplied guide is titled "The Base Game, but Explain DLC Combat." Explain combat.'
+  ])('does not take attributed contrasts as independent requests for %s', prompt => {
+    expect(gamingRequestTargetsExtraContent({ game: 'Xenoblade Chronicles 2', prompt })).toBe(false);
+  });
+
+  test.each(['or', 'and'])('keeps both coordinated exclusions joined by %s out of extra-content intent', conjunction => {
+    const input = { game: 'Xenoblade Chronicles 2', prompt: `Explain combat without DLC ${conjunction} expansions.` };
+    const edition = resolveGamingRequestEdition(input);
+    expect(edition).toBe('base-game');
+    expect(gamingRequestTargetsExtraContent(input)).toBe(false);
+    expect(gamingEditionEvidenceMatchesRequest(undefined, edition, input)).toBe(true);
+  });
+
+  test.each([
+    'Explain combat without DLC or expansions, but include DLC combat tips.',
+    'Explain combat without DLC and expansions and then include DLC combat tips.',
+    'Explain combat, not without DLC or expansions.'
+  ])('keeps a renewed or unexcluded DLC request for %s', prompt => {
+    const input = { game: 'Xenoblade Chronicles 2', prompt };
+    const edition = resolveGamingRequestEdition(input);
+    expect(edition).toBeUndefined();
+    expect(gamingRequestTargetsExtraContent(input)).toBe(true);
+    expect(gamingEditionEvidenceMatchesRequest(undefined, edition, input)).toBe(false);
+  });
 });

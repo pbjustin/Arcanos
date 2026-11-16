@@ -604,26 +604,7 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
     visit(index + 1, coverageMask, requiredMask, focusMask, structuralSupport, relevantStructural, shapedStructural, cost);
   };
   if (requestAssessable) visit(0, 0, 0, 0, 0, false, false, 0);
-  if (winner) {
-    const [passage] = winner.candidates;
-    // A cheap table row can omit the condition the player explicitly asked
-    // about. Prefer a complete, bounded passage in the same acquired revision
-    // when it already passed coverage and retains the requested wording.
-    if (input.mode === 'guide' && !requirements.length && winner.candidates.length === 1
-      && passage.evidence.evidenceUnits?.length) {
-      const condition = /\bwith\s+([^.!?;\n]{1,100})(?=[.!?;]?\s*$)/iu.exec(input.prompt)?.[1];
-      const missing = focusTerms.filter(term => gamingTermCoverage(passage.evidence.text, [term]) === 0);
-      if (condition && gamingTermCoverage(condition, missing) > 0) {
-        const related = entries.find(entry => entry.complete && !entry.hasUnits
-          && entry.candidate.source.sourceId === passage.source.sourceId
-          && entry.candidate.evidence.revisionId === passage.evidence.revisionId
-          && countBits(entry.focusMask) === focusTerms.length
-          && intact([entry.candidate]));
-        if (related) return [related.candidate];
-      }
-    }
-    return winner.candidates;
-  }
+  if (winner) return winner.candidates;
 
   // An incomplete request retains useful, bounded passages without claiming a
   // complete cover. Mandatory source identities must still survive formatting.

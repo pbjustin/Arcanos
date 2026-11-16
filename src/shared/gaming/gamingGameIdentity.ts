@@ -38,7 +38,14 @@ export function normalizeGamingEvidenceGameIdentity(game: string): string {
 /** Source-attributed title descriptions never choose a player's edition. */
 function gamingRequestScopeText(question: string): string {
   return question.replace(/https?:\/\/[^\s)]+/giu, ' ')
-    .replace(/(?:^|[.!?]\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|supplied|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu, ' ');
+    .replace(/(?:^|(?<=[.!?])\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|supplied|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu,
+      description => {
+        // Keep offsets while masking titles, including quotes cut off by the sentence boundary.
+        const unquoted = description.replace(/"[^"\n]*(?:"|$)|“[^”\n]*(?:”|$)|`[^`\n]*(?:`|$)|‘[^’\n]*(?:’|$)|(?<![\p{L}\p{N}])'[^'\n]*(?:'(?![\p{L}\p{N}])|$)/gu,
+          quote => ' '.repeat(quote.length));
+        const request = /\b(?:but|however|instead|yet)\b\s*,?\s+(?=(?:please|(?:can|could|would|will)\s+you|i\s+(?:want|need|would\s+like)|(?:how|what|which|where|when|why)\s+(?:do|does|can|could|should|is|are)|explain|describe|recommend|tell|show|list|include)\b)/iu.exec(unquoted);
+        return request ? ` ${description.slice(request.index)}` : ' ';
+      });
 }
 
 const NEGATED_CONTENT_ACTION = String.raw`(?:not|never|don['’]t|doesn['’]t)\s+(?:include|use|recommend|suggest|cover|mention|show|give)`;
@@ -63,7 +70,8 @@ function withoutExcludedExpansionScope(question: string, names: readonly string[
   const genericExpansion = String.raw`dlcs?|expansions?(?:\s+content)?`;
   const expansionPattern = [genericExpansion, ...names.map(gamingRegistryLiteralPattern)].join('|');
   const qualifier = String.raw`\s+(?:(?:any|the)\s+)?`;
-  const negativeScope = new RegExp(String.raw`\b(?:(?:without|no|excluding)${qualifier}(?:${expansionPattern})|${NEGATED_CONTENT_ACTION}${qualifier}(?:${genericExpansion}))\b`, 'giu');
+  const coordinated = String.raw`(?:\s+(?:and|or)${qualifier}(?:${genericExpansion})\b)*`;
+  const negativeScope = new RegExp(String.raw`\b(?:(?:without|no|excluding)${qualifier}(?:${expansionPattern})|${NEGATED_CONTENT_ACTION}${qualifier}(?:${genericExpansion}))\b${coordinated}`, 'giu');
   return question.replace(negativeScope, (clause: string, offset: number) =>
     /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
 }

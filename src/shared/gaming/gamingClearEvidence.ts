@@ -307,6 +307,7 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
         if (!(assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported)) return false;
         if (isGamingSemanticCoverageRequirement(requirement)) return unit.fields.map(field => supportsRequirement(field.value)).some(Boolean);
+        if (requirement.operationSetting) return unit.fields.some(field => gamingRequirementSupported(field.value, requirement));
         if (gamingTermCoverage(unit.text, gamingStructuralCoverageTerms(input, unit, requirement.terms)) !== 1) return false;
         if (!requirement.procedure && !requirement.relation) return true;
         const fields = new Map(unit.fields.map(field => [normalizeGamingStructuralFieldLabel(field.label), field.value]));

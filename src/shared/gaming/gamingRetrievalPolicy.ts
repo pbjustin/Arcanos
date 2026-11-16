@@ -29,7 +29,8 @@ const EQUIPMENT_UPGRADE_MEANS = '[\\p{L}\\p{N}][^.!?;\\n]{1,120}';
 const EQUIPMENT_UPGRADE_DETAIL = `${EQUIPMENT_UPGRADE_MEANS_PREFIX}(?<method>${EQUIPMENT_UPGRADE_MEANS})`;
 const EQUIPMENT_UPGRADE_WITHHELD_METHOD = /\b(?:at|with|using|via|by)\s+(?:some\s+(?:point|time)|a\s+later\s+(?:point|time)|no\s+(?:(?:clear|known|documented)\s+)?(?:method|instructions?|steps?))\b/iu;
 const GAMEPLAY_FUTURE_RELEASE = /\b(?:coming\s+soon|(?:in|with|after|once)\s+(?:(?:the\s+)?next|a\s+future)\s+(?:update|patch|release|season))\b/iu;
-const EQUIPMENT_UPGRADE_REFERENCE_ONLY = /^(?:(?:using|following|visiting|consulting|reading)\s+)?(?:(?:this|that|the|an?)\s+)?(?:guide|walkthrough|wiki|article|page)(?=\s*(?:$|[.,]|(?:for|on|about|above|below|here)\b))/iu;
+const GUIDE_REFERENCE_DESTINATION = String.raw`(?:(?:this|that|the|an?|another|my|our|your)\s+)?(?:(?:separate|other|linked|full|online)\s+){0,2}(?:guide|walkthrough|wiki|article|page)(?=\s*(?:$|[.,]|(?:for|on|about|above|below|here|linked|elsewhere)\b))`;
+const EQUIPMENT_UPGRADE_REFERENCE_ONLY = new RegExp(String.raw`^(?:(?:using|following|visiting|consulting|reading)\s+)?${GUIDE_REFERENCE_DESTINATION}`, 'iu');
 const EQUIPMENT_UPGRADE_UNAVAILABLE_MEANS = /(?:^(?:(?:an?|some|the)\s+)?|\b(?:that|which)\s+(?:is|are|remains?)\s+)(?:(?:still|currently)\s+)?(?:unknown|unavailable|inaccessible|unspecified|undisclosed)\b/iu;
 const EQUIPMENT_UPGRADE_STATEMENTS = [
   new RegExp(`^(?:you\\s+(?:can|must|should)\\s+)?${EQUIPMENT_UPGRADE_PREDICATE}${EQUIPMENT_UPGRADE_DETAIL}`, 'iu'),
@@ -43,8 +44,10 @@ const WATERCRAFT_EXIT = '(?:(?:get|gets|got|getting|step|steps|stepped|stepping|
 const PLAYER_DISEMBARKATION = new RegExp(`^(?:(?:i\\s+(?:have\\s+)?|i['’]ve\\s+))?(?:just\\s+)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*[.!]?$`, 'iu');
 const DISEMBARKATION_NEXT_QUERY = /^(?:what\s+(?:(?:should|can|do)\s+i\s+do\s+)?(?:next|now)|where\s+(?:should|can|do)\s+i\s+go\s+(?:next|now)|how\s+(?:do|can|should)\s+i\s+(?:continue|proceed))\s*(?=[.!?,;]|$|\band\s+(?:what|where|how|why|which)\b)/iu;
 const DISEMBARKATION_HANDOFF = new RegExp(`^(?:after|once)\\s+(?:you\\s+(?:have\\s+)?)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*(?:(?:at|in|near|outside)\\s+(?![^,.!?;\\n]{0,120}\\b(?:and|or|while|where|when|after|before|during|until|then)\\b)(?<location>[^,.!?;\\n]{1,120}))?,\\s*(?<action>.+)$`, 'iu');
-const HANDOFF_REFERENCE_ONLY = /^(?:(?:you\s+(?:should|must)|next|then)\s+)?(?:read|consult|visit|see|follow|open|check)\s+(?:(?:the|this|that|an?|another)\s+)?(?:(?:separate|other|linked|full|online)\s+)?(?:walkthrough|guide|wiki|article|page)(?=\s*(?:$|[.,]|(?:for|on|here|above|below|linked|elsewhere)\b))/iu;
-const WATERCRAFT_HANDOFF_ACTION = /^(?:(?:you\s+(?:should|must)|next|then)\s+)?(?:drive\s+|(?:get|climb|step)\s+(?:in|into|onto)\s+|(?:walk|run|head)\s+(?:to|towards?|through|past)\s+)\p{L}/iu;
+const HANDOFF_COMMAND_PREFIX = String.raw`(?:(?:you\s+(?:should|must)|next|then)\s+)?`;
+const HANDOFF_DESTINATION_MOVEMENT = String.raw`(?:walk|run|head)\s+(?:to|towards?|through|past)`;
+const HANDOFF_REFERENCE_ONLY = new RegExp(String.raw`^${HANDOFF_COMMAND_PREFIX}(?:read|consult|visit|see|follow|open|check|${HANDOFF_DESTINATION_MOVEMENT})\s+${GUIDE_REFERENCE_DESTINATION}`, 'iu');
+const WATERCRAFT_HANDOFF_ACTION = new RegExp(String.raw`^${HANDOFF_COMMAND_PREFIX}(?:drive\s+|(?:get|climb|step)\s+(?:in|into|onto)\s+|${HANDOFF_DESTINATION_MOVEMENT}\s+)\p{L}`, 'iu');
 
 type GamingEquipmentUpgrade = 'equipment' | 'weapons' | 'tools' | 'armor';
 
@@ -526,7 +529,12 @@ export interface GamingRequestRequirement {
   relation?: 'materials' | 'acquisition';
   equipmentUpgrade?: GamingEquipmentUpgrade;
   disembarkation?: true;
+  operationSetting?: string;
 }
+
+const OPERATION_SETTING = String.raw`(?:manual|automatic)\s+\p{L}[\p{L}\p{N}-]{0,39}`;
+const OPERATION_SETTING_REQUEST = new RegExp(String.raw`^\s*how\s+(?:do|can|should)\s+(?:i|we)\s+[^.!?]{1,160}\s+with\s+(${OPERATION_SETTING})\s*[.!?]?$`, 'iu');
+const OPERATION_SETTING_INSTRUCTION = new RegExp(String.raw`^with\s+(${OPERATION_SETTING})(?:\s+(?:enabled|active|on))?,\s*(.+)$`, 'iu');
 
 /** These bounded relationships can supply coverage without shared topic tokens. */
 export function isGamingSemanticCoverageRequirement(requirement: GamingRequestRequirement): boolean {
@@ -825,6 +833,40 @@ function gamingAffirmativeProcedureSubject(subject: string, terms: readonly stri
     || !coordinated.slice(0, -1).some(part => gamingTermCoverage(part, terms) === 1);
 }
 
+function gamingOperationSettingSupported(text: string, setting: string, terms: readonly string[]): boolean {
+  const settingTerms = gamingLexicalTokens(setting);
+  const requestedAction = GAMEPLAY_ACTIONS.has(terms[0]) ? terms[0] : undefined;
+  const topic = terms.filter(term => term !== requestedAction && !settingTerms.includes(term));
+  if (!topic.length) return false;
+  const actionInstruction = (clause: string) => {
+    const clean = clause.trim();
+    if (/\?|\b(?:not|never|unable|unavailable|if|unless|might|would)\b/iu.test(clean)
+      || GAMEPLAY_FUTURE_RELEASE.test(clean) || HANDOFF_REFERENCE_ONLY.test(clean)) return undefined;
+    return gamingActionInstruction(clean) ?? (/^(?:enable|set|adjust)\s+\p{L}/iu.test(clean)
+      ? clean.replace(/[.!]$/u, '').toLowerCase() : undefined);
+  };
+  const addressesTopic = (instruction: string | undefined) => Boolean(instruction
+    && (!requestedAction || instruction.startsWith(requestedAction + ' '))
+    && gamingTermCoverage(gamingActionObject(instruction).terms.join(' '), topic) === 1);
+  return text.split(/\n\s*\n/u).some(paragraph => {
+    const sentences = splitGamingProse(paragraph, /\n+|(?<=[.!?])\s+|;\s*/u);
+    return sentences.some((sentence, index) => {
+      const scoped = OPERATION_SETTING_INSTRUCTION.exec(sentence.trim());
+      if (!scoped || scoped[1].toLowerCase().replace(/\s+/gu, ' ') !== setting) return false;
+      const action = actionInstruction(scoped[2]);
+      if (!action) return false;
+      const purpose = /\b(?:before|to)\s+(?:you\s+)?(.+)$/u.exec(action)?.[1];
+      if (addressesTopic(action) || purpose && addressesTopic(actionInstruction(purpose))) return true;
+      // An adjacent instruction can explain how to adjust the very setting
+      // it names, but a separate gameplay action cannot inherit the condition.
+      const previous = sentences[index - 1];
+      return /^(?:set|adjust)\s+/u.test(action) && gamingActionObject(action).terms.join(' ') === settingTerms.at(-1)
+        && Boolean(previous && actionInstruction(previous)
+          && previous.split(/\s+and\s+/iu).some(clause => addressesTopic(actionInstruction(clause))));
+    });
+  });
+}
+
 /** Exact named topic anchors plus an acquired requirement/action relationship.
  * These closed grammatical alternatives do not relax other lexical clauses. */
 export function gamingRequirementSupported(text: string, requirement: GamingRequestRequirement): boolean {
@@ -835,6 +877,7 @@ export function gamingRequirementSupported(text: string, requirement: GamingRequ
   if (requirement.relation === 'acquisition') return gamingMaterialAcquisitionSupported(text, requirement.terms);
   if (requirement.equipmentUpgrade !== undefined) return supportsEquipmentUpgrade(text, requirement.equipmentUpgrade);
   if (requirement.disembarkation) return gamingDisembarkationHandoffs(text).length > 0;
+  if (requirement.operationSetting) return gamingOperationSettingSupported(text, requirement.operationSetting, requirement.terms);
   if (!requirement.procedure) return gamingTermCoverage(text, requirement.terms) === 1;
   if (requirement.procedure === 'start') return gamingStartingActions(text, requirement.terms) >= (requirement.minimumActions ?? 1);
   return text.split(/\n+|(?<=[.!?])\s+|;\s*/u).some(sentence => {
@@ -940,6 +983,8 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     const explicitActions = gamingRequestedActionCount(clause);
     const procedure = explicitActions !== undefined ? 'start' as const : gamingProcedureRequest(clause);
     const equipmentUpgrade = input.mode === 'guide' ? requestedEquipmentUpgrade(topicalClause) : undefined;
+    const operationSetting = input.mode === 'guide' && !procedure
+      ? OPERATION_SETTING_REQUEST.exec(topicalClause)?.[1].toLowerCase().replace(/\s+/gu, ' ') : undefined;
     const minimumActions = explicitActions ?? (procedure === 'start' && FIRST_STEPS.test(clause) ? 2 : undefined);
     const relation = /^where\s+(?:can|do)\s+(?:i|we)\s+(?:find|obtain|buy|collect)\s+materials\s+for\b/iu.test(topicalClause.trim()) ? 'acquisition' as const
       : /\bwhat\s+materials\s+do\s+(?:i|we)\s+need\s+for\b|\b(?:identify|list|describe)\s+(?:the\s+)?required\s+materials\b/iu.test(topicalClause) ? 'materials' as const : undefined;
@@ -967,14 +1012,15 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
     ].find(facet => facet.words.every(word => clauseWords.has(word)));
     return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms, ...(procedure ? { procedure } : {}),
       ...(minimumActions !== undefined ? { minimumActions } : {}), ...(relation ? { relation } : {}),
-      ...(equipmentUpgrade ? { equipmentUpgrade } : {}) };
+      ...(equipmentUpgrade ? { equipmentUpgrade } : {}), ...(operationSetting ? { operationSetting } : {}) };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
   if (disembarkation) requirements.push({
     requirement: 'next action after disembarkation', terms: ['boat'], disembarkation: true
   });
   // A coordinated target is one atomic request, not two independently supported facts.
   return (requirements.length > 1 || hasAtomicTarget || hasCoordinatedTarget && requirements.length === 1
-    || requirements.some(requirement => requirement.procedure || requirement.relation || isGamingSemanticCoverageRequirement(requirement)))
+    || requirements.some(requirement => requirement.procedure || requirement.relation || requirement.operationSetting
+      || isGamingSemanticCoverageRequirement(requirement)))
     && requirements.every(requirement => requirement.terms.length >= 1)
     ? requirements.map((requirement, index) => ({ ...requirement,
       requirement: requirements.filter(entry => entry.requirement === requirement.requirement).length > 1

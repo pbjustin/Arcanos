@@ -63,6 +63,16 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     expect(assessGamingClearEvidence(input, data, { now, requireRequestCoverage: true }).decision).not.toBe('accept');
   });
 
+  test.each([
+    'Use the linked guide to reinforce your armaments.',
+    'Use the separate online guide to reinforce your armaments.'
+  ])('does not treat a qualified source reference as the weapon upgrade method: %s', passage => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I upgrade my weapons?' };
+    const data = knowledge(input.game, [passage]);
+    expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(input, data, { now, requireRequestCoverage: true }).decision).not.toBe('accept');
+  });
+
   test('does not turn a generic improvement method into proof for a named item', () => {
     const input = { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I upgrade the Bloodhound’s Fang?' };
     const data = knowledge(input.game, ['Use the smithing table to reinforce your armaments with Smithing Stones.']);
@@ -90,7 +100,8 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
 
   test.each([
     'After disembarking from the ship at the docks, follow the path past the mooring post.',
-    'Once you step off the ferry, walk to the ticket office.'
+    'Once you step off the ferry, walk to the ticket office.',
+    'After you step off the ferry, follow the guide through the gate.'
   ])('credits an explicit player disembarkation and its actual next action', passage => {
     const data = knowledge(disembarkationRequest.game, [passage]);
     expect(assessGamingRequestCoverage(disembarkationRequest, data).coverageSatisfied).toBe(true);
@@ -104,6 +115,8 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     'After arriving at the docks by boat, follow the path past the mooring post.',
     'The boat docks before the path opens. Follow the path past the mooring post.',
     'After disembarking from the ship, read the separate walkthrough for next steps.',
+    'After disembarking from the ship, head to our walkthrough for the next steps.',
+    'After disembarking from the ship, walk to the separate online wiki for the next steps.',
     'After disembarking from the ship, drive away once the next patch unlocks the car.',
     'You got off the boat at the docks. There is no next instruction here.',
     '“After you get off the boat, follow the path past the mooring post.”'

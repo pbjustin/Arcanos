@@ -607,8 +607,9 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if (!sourceGameMatches(label[1]))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
   }
-  for (const { text: articleSubject, namedGameScope } of articleScopeAssertionScopes.subjects) {
-    const recognizedGame = detectGamingRegistryAlias(articleSubject, true, true);
+  for (const { text: articleSubject, explicitGameScope, namedGameScope } of articleScopeAssertionScopes.subjects) {
+    // An explicit declaration can name a known game followed by an edition qualifier.
+    const recognizedGame = detectGamingRegistryAlias(articleSubject, true, !explicitGameScope);
     if (namedGameScope && !sourceGameMatches(articleSubject)
       || recognizedGame && !sourceGameMatches(recognizedGame.name))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.article_scope_assertion_conflict', 'body_scope');
