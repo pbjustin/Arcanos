@@ -878,7 +878,8 @@ describe('GTA IV opening mission controls', () => {
     expect(sdk).toHaveBeenCalledTimes(3);
   });
 
-  it('reaches a cited next step when the owned opening hands off to an adjoining route section', async () => {
+  it.each(['Just got off the boat.', 'Just got off the boat at the beginning.'])
+  ('reaches a cited next step for %s when the owned opening hands off to an adjoining route section', async progressPoint => {
     const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
     const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
     const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.';
@@ -886,7 +887,7 @@ describe('GTA IV opening mission controls', () => {
       + '<div class="walkthrough"><h2>Introduction</h2>' + checkpoint + ' ' + driving + '<br>'
       + '<h2>To The Apartment</h2>' + route
       + '<h2>Later in the mission</h2><p>Keep the LATER_MISSION_SENTINEL out of the player excerpt.</p></div>' };
-    scenario = storyScenario('Just got off the boat.', article);
+    scenario = storyScenario(progressPoint, article);
     scenario.claims = [{ url: article.url, draft: 'Drive Roman to his apartment by following the yellow GPS marker.',
       answerProbe: /Drive Roman to his apartment.*yellow GPS marker/iu,
       support: [/step off the cargo ship/iu, /drive him back to his apartment/iu, /yellow marker on the radar/iu] }];

@@ -156,6 +156,27 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     ]) expect(assessGamingRequestCoverage(input, knowledge(input.game, unbound)).coverageSatisfied).toBe(false);
   });
 
+  test('requires opening evidence when the player locates the checkpoint at the beginning', () => {
+    const input = { ...disembarkationRequest, game: 'Grand Theft Auto IV',
+      progressPoint: 'Just got off the boat at the beginning.' };
+    const checkpoint = 'After Niko steps off the cargo ship at Liberty City, Roman has arrived to collect you.';
+    const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
+    const introduction = checkpoint.replace('After Niko', 'After watching the introduction where Niko');
+    const opening = knowledge(input.game, [`${introduction} ${driving}`]);
+    expect(assessGamingRequestCoverage(input, opening).coverageSatisfied).toBe(true);
+    for (const unbound of [
+      [`${checkpoint} ${driving}`],
+      [introduction, driving],
+      ['After you step off the boat at the docks, follow the path past the mooring post.'],
+      ['After the boat docks at the beginning, read the separate walkthrough.'],
+      ['The boat docks at the beginning. Follow the path past the mooring post.']
+    ]) {
+      const data = knowledge(input.game, unbound);
+      expect(assessGamingRequestCoverage(input, data).coverageSatisfied).toBe(false);
+      expect(assessGamingClearEvidence(input, data, { now }).decision).not.toBe('accept');
+    }
+  });
+
   test('cannot use passage selection to choose an unspecified disembarkation checkpoint', () => {
     const input = { ...disembarkationRequest, game: 'Sea of Thieves' };
     const routes = [

@@ -41,15 +41,17 @@ const EQUIPMENT_UPGRADE_STATEMENTS = [
 
 const WATERCRAFT = '(?:boat|ship|ferry)';
 const WATERCRAFT_EXIT = '(?:(?:get|gets|got|getting|step|steps|stepped|stepping|climb|climbs|climbed|climbing|walk|walks|walked|walking)\\s+off|disembark(?:s|ed|ing)?\\s+from)';
-const PLAYER_DISEMBARKATION = new RegExp(`^(?:(?:i\\s+(?:have\\s+)?|i['’]ve\\s+))?(?:just\\s+)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*[.!]?$`, 'iu');
+const OPENING_CHECKPOINT = 'at\\s+the\\s+beginning';
+const PLAYER_DISEMBARKATION = new RegExp(`^(?:(?:i\\s+(?:have\\s+)?|i['’]ve\\s+))?(?:just\\s+)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}(?:\\s+(?<opening>${OPENING_CHECKPOINT}))?\\s*[.!]?$`, 'iu');
 const DISEMBARKATION_NEXT_QUERY = /^(?:what\s+(?:(?:should|can|do)\s+i\s+do\s+)?(?:next|now)|where\s+(?:should|can|do)\s+i\s+go\s+(?:next|now)|how\s+(?:do|can|should)\s+i\s+(?:continue|proceed))\s*(?=[.!?,;]|$|\band\s+(?:what|where|how|why|which)\b)/iu;
-const DISEMBARKATION_HANDOFF = new RegExp(`^(?:after|once)\\s+(?:you\\s+(?:have\\s+)?)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}\\s*(?:(?:at|in|near|outside)\\s+(?![^,.!?;\\n]{0,120}\\b(?:and|or|while|where|when|after|before|during|until|then)\\b)(?<location>[^,.!?;\\n]{1,120}))?,\\s*(?<action>.+)$`, 'iu');
+const DISEMBARKATION_HANDOFF = new RegExp(`^(?:after|once)\\s+(?:(?:you\\s+(?:have\\s+)?)?${WATERCRAFT_EXIT}\\s+the\\s+${WATERCRAFT}|(?<docking>the\\s+${WATERCRAFT}\\s+docks))\\s*(?:(?<opening>${OPENING_CHECKPOINT})|(?:at|in|near|outside)\\s+(?![^,.!?;\\n]{0,120}\\b(?:and|or|while|where|when|after|before|during|until|then)\\b)(?<location>[^,.!?;\\n]{1,120}))?,\\s*(?<action>.+)$`, 'iu');
 const HANDOFF_COMMAND_PREFIX = String.raw`(?:(?:you\s+(?:should|must)|next|then)\s+)?`;
 const HANDOFF_DESTINATION_MOVEMENT = String.raw`(?:walk|run|head)\s+(?:to|towards?|through|past)`;
 const HANDOFF_REFERENCE_ONLY = new RegExp(String.raw`^${HANDOFF_COMMAND_PREFIX}(?:read|consult|visit|see|follow|open|check|${HANDOFF_DESTINATION_MOVEMENT})\s+${GUIDE_REFERENCE_DESTINATION}`, 'iu');
 const WATERCRAFT_HANDOFF_ACTION = new RegExp(String.raw`^${HANDOFF_COMMAND_PREFIX}(?:drive\s+|(?:get|climb|step)\s+(?:in|into|onto)\s+|${HANDOFF_DESTINATION_MOVEMENT}\s+)\p{L}`, 'iu');
 
 type GamingEquipmentUpgrade = 'equipment' | 'weapons' | 'tools' | 'armor';
+interface GamingDisembarkationCheckpoint { game: string; opening: boolean }
 
 function equipmentUpgradeKind(object: string): GamingEquipmentUpgrade {
   if (/^(?:armaments?|weapons?)$/iu.test(object)) return 'weapons';
@@ -82,22 +84,23 @@ function supportsEquipmentUpgrade(text: string, target: GamingEquipmentUpgrade):
 }
 
 /** Recognize a specific player checkpoint without mapping general arrival to disembarkation. */
-function requestedDisembarkation(input: GamingRetrievalPolicyInput): boolean {
-  return input.mode === 'guide' && input.contextOrigins?.progressPoint !== 'tentative'
-    && !input.contextConflicts?.includes('progressPoint')
-    && PLAYER_DISEMBARKATION.test(input.progressPoint?.trim() ?? '')
-    && DISEMBARKATION_NEXT_QUERY.test(gamingTopicalRequest(input.prompt).trim());
+function requestedDisembarkation(input: GamingRetrievalPolicyInput): GamingDisembarkationCheckpoint | undefined {
+  if (!input.game || input.mode !== 'guide' || input.contextOrigins?.progressPoint === 'tentative'
+    || input.contextConflicts?.includes('progressPoint')
+    || !DISEMBARKATION_NEXT_QUERY.test(gamingTopicalRequest(input.prompt).trim())) return;
+  const checkpoint = PLAYER_DISEMBARKATION.exec(input.progressPoint?.trim() ?? '')?.groups;
+  if (checkpoint) return { game: input.game, opening: Boolean(checkpoint.opening) };
 }
 
 /** Bind a third-person checkpoint to an earned player instruction in one walkthrough paragraph. */
-function gamingNarratedDisembarkation(text: string, game: string): string[] {
+function gamingNarratedDisembarkation(text: string, game: string, openingOnly = false): string[] {
   if (!/\bafter\s/iu.test(text) || !/\bdrive\s/iu.test(text)) return [];
   const vessel = new RegExp(String.raw`^${WATERCRAFT}$`, 'iu');
   const actors = [...new Set(resolveGamingRegistryGame(game)?.guideTopics?.flatMap(topic =>
     topic.actions.flatMap(action => action.objects.some(object => vessel.test(object)) ? action.actors ?? [] : [])) ?? [])];
   if (!actors.length) return [];
   const actor = actors.map(gamingRegistryLiteralPattern).join('|');
-  const opening = new RegExp(String.raw`^after\s+(?:(?:watching|seeing)\s+the\s+introduction(?:\s+to\s+the\s+game)?\s+where\s+)?(?:${actor})(?:\s+and\s+(?:his|her|their)\s+(?:(?:fellow|other)\s+)?[\p{L}-]{1,32})?\s+${WATERCRAFT_EXIT}\s+(?:(?:the|a|an)\s+)?(?:(?!overlooking\b|facing\b|near\b|past\b|by\b|before\b|beside\b|platform\b)[\p{L}'’-]{1,32}\s+){0,2}${WATERCRAFT}(?:\s+(?:(?:that\s+brought\s+(?:them|you)\s+into)|at|in)\s+(?<location>[\p{L}][\p{L} -]{0,79}))?,\s*(?<companion>[\p{L}'’-]{1,32}(?:\s+(?!has\b)[\p{L}'’-]{1,32})?)\s+(?:(?:has\s+)?arrived|came|comes)\s+to\s+(?:collect|meet|pick\s+up)\s+you\.$`, 'iu');
+  const opening = new RegExp(String.raw`^after\s+(?<introduction>(?:watching|seeing)\s+the\s+introduction(?:\s+to\s+the\s+game)?\s+where\s+)?(?:${actor})(?:\s+and\s+(?:his|her|their)\s+(?:(?:fellow|other)\s+)?[\p{L}-]{1,32})?\s+${WATERCRAFT_EXIT}\s+(?:(?:the|a|an)\s+)?(?:(?!overlooking\b|facing\b|near\b|past\b|by\b|before\b|beside\b|platform\b)[\p{L}'’-]{1,32}\s+){0,2}${WATERCRAFT}(?:\s+(?:(?:that\s+brought\s+(?:them|you)\s+into)|at|in)\s+(?<location>[\p{L}][\p{L} -]{0,79}))?,\s*(?<companion>[\p{L}'’-]{1,32}(?:\s+(?!has\b)[\p{L}'’-]{1,32})?)\s+(?:(?:has\s+)?arrived|came|comes)\s+to\s+(?:collect|meet|pick\s+up)\s+you\.$`, 'iu');
   const onward = /^(?:once|when)\s+you(?:\s+are|['’]re)\s+in\s+(?<possessor>his|her)\s+(?:car|vehicle),\s*you(?:['’]ll|\s+will)\s+(?:need|have)\s+to\s+(?<action>drive\s+(?<passenger>him|her)\s+(?:back\s+)?to\s+(?:(?:his|her|their|the)\s+)?(?:[\p{L}][\p{L} -]{1,80}|['‘][\p{L} -]{2,40}['’]))\.$/iu;
   const handoffs: string[] = [];
   for (const paragraph of text.split(/\n\s*\n/u)) {
@@ -109,7 +112,8 @@ function gamingNarratedDisembarkation(text: string, game: string): string[] {
     if (!sentence) continue;
     const lead = sentence[0].trim();
     const checkpoint = opening.exec(lead)?.groups;
-    if (!checkpoint || !acquired.text.slice(sentence.index, sentence.index + sentence[0].length).includes(lead)) continue;
+    if (!checkpoint || openingOnly && !checkpoint.introduction
+      || !acquired.text.slice(sentence.index, sentence.index + sentence[0].length).includes(lead)) continue;
     const person = new RegExp(String.raw`^(?:he|she|${gamingRegistryLiteralPattern(checkpoint.companion)})(?=\s|['’])`, 'iu');
     for (const next of following.slice(0, 3)) {
       const statement = next[0].trim();
@@ -132,7 +136,7 @@ function gamingNarratedDisembarkation(text: string, game: string): string[] {
 }
 
 /** Keep each affirmative player handoff intact so a bare request cannot pick between distinct routes. */
-export function gamingDisembarkationHandoffs(text: string, game?: string, intactText = text): string[] {
+export function gamingDisembarkationHandoffs(text: string, checkpoint?: GamingDisembarkationCheckpoint, intactText = text): string[] {
   if (text.length > 8_000) return [];
   const owned = gamingApplicabilityAssertionText(text);
   if (!owned.complete) return [];
@@ -141,10 +145,13 @@ export function gamingDisembarkationHandoffs(text: string, game?: string, intact
       || GAMEPLAY_FUTURE_RELEASE.test(statement)) return [];
     const handoff = DISEMBARKATION_HANDOFF.exec(statement.trim())?.groups;
     if (!handoff || HANDOFF_REFERENCE_ONLY.test(handoff.action)) return [];
+    // Docking can support the opening handoff when the passage anchors both.
+    if (checkpoint?.opening ? !handoff.opening : handoff.docking) return [];
     if (!gamingActionInstruction(handoff.action, false) && !WATERCRAFT_HANDOFF_ACTION.test(handoff.action)) return [];
     return [gamingLexicalTokens(handoff.location ?? '').join(' ') + '\u0000' + gamingLexicalTokens(handoff.action).join(' ')];
   });
-  return game && intactText.length <= 8_000 ? [...direct, ...gamingNarratedDisembarkation(intactText, game)] : direct;
+  return checkpoint && intactText.length <= 8_000
+    ? [...direct, ...gamingNarratedDisembarkation(intactText, checkpoint.game, checkpoint.opening)] : direct;
 }
 
 /** Acquisition titles preserve their literal topic terms. */
@@ -487,7 +494,7 @@ export function hasGamingRelevantGuideContribution(text: string, input: GamingRe
   const generic = new Set('create provide focusing focus recommend recommended recommendation recommendations best good guide build builds early game latest current beginner general advice weapon weapons stat stats armor armour route location configuration allocation'.split(' '));
   const anchors = buildGamingRetrievalTerms(input).focusTerms.filter(term => !generic.has(term));
   return anchors.length > 0 && gamingTermCoverage(text, anchors) > 0
-    || input.mode === 'guide' && (EQUIPMENT_UPGRADE_WORD.test(input.prompt) || requestedDisembarkation(input))
+    || input.mode === 'guide' && (EQUIPMENT_UPGRADE_WORD.test(input.prompt) || requestedDisembarkation(input) !== undefined)
       && buildGamingRequestRequirements(input).some(requirement => isGamingSemanticCoverageRequirement(requirement)
         && gamingRequirementSupported(text.split(/\n\s*\n/u).map(paragraph =>
           gamingAttributableClaimText(paragraph, input.game)).join('\n\n'), requirement, text));
@@ -572,7 +579,7 @@ export interface GamingRequestRequirement {
   minimumActions?: number;
   relation?: 'materials' | 'acquisition';
   equipmentUpgrade?: GamingEquipmentUpgrade;
-  disembarkation?: string;
+  disembarkation?: GamingDisembarkationCheckpoint;
   operationSetting?: string;
 }
 
@@ -1001,7 +1008,7 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
 /** Overflow asks for a narrower scope; it never silently omits requested facts. */
 export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPolicyInput): boolean {
   const { clauses } = gamingRequestClauses(input);
-  return clauses.length + Number(requestedDisembarkation(input)) > 8 || clauses.some(clause => {
+  return clauses.length + Number(Boolean(requestedDisembarkation(input))) > 8 || clauses.some(clause => {
     const count = gamingRequestedActionCount(clause);
     return count !== undefined && (count < 1 || count > 8);
   });
@@ -1020,7 +1027,7 @@ export function gamingRequestScopeUnresolved(input: GamingRetrievalPolicyInput):
 export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
   const { clauses, hasCoordinatedTarget } = gamingRequestClauses(input);
   const disembarkation = requestedDisembarkation(input);
-  if (clauses.length + Number(disembarkation) > 8) return [];
+  if (clauses.length + Number(Boolean(disembarkation)) > 8) return [];
   const subject = gamingScopedRequest(input.prompt).split(/\b(?:including|covering|include|covers?)\s+/iu, 1)[0];
   const genericTerms = new Set('identify list required materials prerequisites requirements actions needed its them concrete ordered'.split(' '));
   const topicTerms = buildGamingClaimCoverageTerms({ game: input.game, prompt: subject }).filter(term => !genericTerms.has(term));
@@ -1064,7 +1071,7 @@ export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput
       ...(equipmentUpgrade ? { equipmentUpgrade } : {}), ...(operationSetting ? { operationSetting } : {}) };
   }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
   if (disembarkation) requirements.push({
-    requirement: 'next action after disembarkation', terms: ['boat'], disembarkation: input.game
+    requirement: 'next action after disembarkation', terms: ['boat'], disembarkation
   });
   // A coordinated target is one atomic request, not two independently supported facts.
   return (requirements.length > 1 || hasAtomicTarget || hasCoordinatedTarget && requirements.length === 1
