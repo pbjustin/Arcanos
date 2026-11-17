@@ -65,7 +65,7 @@ import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
-import { checkGamingAnswerIntegrity, isGamingSourcePartiallyExtracted } from '@services/gamingAnswerIntegrity.js';
+import { checkGamingAnswerIntegrity, isGamingSourcePartiallyExtracted, resolveGamingGuideCitations } from '@services/gamingAnswerIntegrity.js';
 import { formatGamingGuidePresentation } from '@services/gamingGuidePresentation.js';
 import { GAMING_PRE_LIMITATION_CANDIDATE, GAMING_PRESENTED_ANSWER, type GamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
 import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '@shared/gaming/gamingPromptCore.js';
@@ -1416,24 +1416,33 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
       });
     }
     trinityResult.result = qualifyAnswer(trinityResult.result);
-    const integrityFailure = checkGamingAnswerIntegrity({
-      answer: trinityResult.result, prompt: resolvedParams.prompt, knowledge: clearKnowledge, advisory: allowAdvisoryFreshness
-    });
+    const integrity = { prompt: resolvedParams.prompt, knowledge: clearKnowledge, advisory: allowAdvisoryFreshness };
+    let integrityFailure = checkGamingAnswerIntegrity({ answer: trinityResult.result, ...integrity });
+    if (!integrityFailure && resolvedParams.mode === 'guide' && resolvedParams.game) {
+      const candidate = trinityResult.result;
+      const formatted = formatGamingGuidePresentation({
+        answer: candidate, prompt: resolvedParams.prompt, game: resolvedParams.game,
+        singleSource: clearKnowledge.sources.length === 1,
+        leadingQualifications: [...answerQualifications, PARTIAL_EXTRACTION_QUALIFICATION]
+      });
+      if (formatted !== candidate && !checkGamingAnswerIntegrity({ answer: formatted, ...integrity })) {
+        trinityResult.result = formatted;
+      }
+      if (prepared?.requireRequestCoverage === true) {
+        const answer = resolveGamingGuideCitations(trinityResult.result, clearKnowledge);
+        if (answer === undefined) {
+          integrityFailure = 'CITATION_NOT_FOUND';
+        } else if (answer !== trinityResult.result) {
+          integrityFailure = checkGamingAnswerIntegrity({ answer, ...integrity });
+          trinityResult.result = answer;
+        }
+      }
+    }
     if (integrityFailure) {
       logger.info('gaming.answer.integrity_rejected', { ...baseLogContext, reason: integrityFailure });
       throw Object.assign(new Error("Gaming provider returned an answer that failed integrity checks."), {
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
-    }
-    if (resolvedParams.mode === 'guide' && resolvedParams.game) {
-      const formatted = formatGamingGuidePresentation({
-        answer: trinityResult.result, prompt: resolvedParams.prompt, game: resolvedParams.game,
-        singleSource: clearKnowledge.sources.length === 1,
-        leadingQualifications: [...answerQualifications, PARTIAL_EXTRACTION_QUALIFICATION]
-      });
-      if (formatted !== trinityResult.result && !checkGamingAnswerIntegrity({
-        answer: formatted, prompt: resolvedParams.prompt, knowledge: clearKnowledge, advisory: allowAdvisoryFreshness
-      })) trinityResult.result = formatted;
     }
   } catch (error) {
     const elapsedMs = Date.now() - providerStartedAt;

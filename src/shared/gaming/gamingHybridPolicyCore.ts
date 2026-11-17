@@ -132,30 +132,39 @@ export function readGamingMarkdownCitationDestination(value: string): { url: str
   return end ? { url, end: tailStart + end[0].length } : undefined;
 }
 
-/** Parse targets without rewriting approved source URLs or swallowing sentence punctuation. */
-export function gamingHybridCitationTargets(answer: string): string[] {
-  const targets: string[] = [];
-  const link = /\[[^\[\]\r\n]*\]\(/gu;
+/** Locate citation targets without rewriting source URLs or consuming sentence punctuation. */
+export function gamingHybridCitationLinks(answer: string): { url: string; start: number; end: number }[] {
+  const links: { url: string; start: number; end: number }[] = [];
+  const link = /\[(?:[^\[\]\r\n]|\[[^\[\]\r\n]*\])*\]\(/gu;
   let offset = 0;
-  const bareText: string[] = [];
+  const addBareLinks = (end: number) => {
+    for (const match of answer.slice(offset, end).matchAll(/https?:\/\/[^\s<>]+/gu)) {
+      const start = offset + match.index;
+      const value = match[0].replace(/[,.;!?]+$/gu, '');
+      const excessClosers = (value.match(/\)/gu)?.length ?? 0) - (value.match(/\(/gu)?.length ?? 0);
+      const trailingClosers = value.match(/\)+$/u)?.[0].length ?? 0;
+      const url = value.slice(0, value.length - Math.min(trailingClosers, Math.max(0, excessClosers)))
+        .replace(/[,.;!?]+$/gu, '');
+      const urlEnd = start + url.length;
+      const autolink = answer[start - 1] === '<' && answer[urlEnd] === '>';
+      links.push({ url, start: autolink ? start - 1 : start, end: urlEnd + Number(autolink) });
+    }
+  };
   for (const match of answer.matchAll(link)) {
     if (match.index < offset) continue;
     const start = match.index + match[0].length;
     const destination = readGamingMarkdownCitationDestination(answer.slice(start));
     if (!destination) continue;
-    targets.push(destination.url);
-    bareText.push(answer.slice(offset, match.index));
+    addBareLinks(match.index);
     offset = start + destination.end;
+    links.push({ url: destination.url, start: match.index, end: offset });
   }
-  bareText.push(answer.slice(offset));
-  for (const value of bareText.join(' ').match(/https?:\/\/[^\s<>]+/gu) ?? []) {
-    const url = value.replace(/[,.;!?]+$/gu, '');
-    const excessClosers = (url.match(/\)/gu)?.length ?? 0) - (url.match(/\(/gu)?.length ?? 0);
-    const trailingClosers = url.match(/\)+$/u)?.[0].length ?? 0;
-    const end = url.length - Math.min(trailingClosers, Math.max(0, excessClosers));
-    targets.push(url.slice(0, end).replace(/[,.;!?]+$/gu, ''));
-  }
-  return [...new Set(targets)];
+  addBareLinks(answer.length);
+  return links;
+}
+
+export function gamingHybridCitationTargets(answer: string): string[] {
+  return [...new Set(gamingHybridCitationLinks(answer).map(link => link.url))];
 }
 
 /** Backend receipts for the ordinary pipeline's supplied-guide grounding guard. */

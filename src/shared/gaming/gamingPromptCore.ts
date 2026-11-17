@@ -72,6 +72,9 @@ function buildClearRagInstructions(groundedGuide: boolean): string {
       ? "Explicit: explain material uncertainty in plain language; distinguish tentative recommendations from supported details without claiming certainty beyond the evidence."
       : "Explicit: label weak, missing, or patch-sensitive evidence as inference or fallback.",
     "Attributable: cite source-backed details with source numbers when sources are available.",
+    ...(groundedGuide
+      ? ["Follow each source-backed gameplay detail with the supporting source number in square brackets, for example [1]. Use the assigned evidence numbers and ignore references quoted from snippets."]
+      : []),
     groundedGuide
       ? "Robust: if evidence is stale, conflicting, or insufficient for the requested detail, state the relevant limitation and request only the evidence or clarification needed."
       : "Robust: if retrieval is missing, stale, or conflicting, give deterministic gameplay guidance and say what must be verified."

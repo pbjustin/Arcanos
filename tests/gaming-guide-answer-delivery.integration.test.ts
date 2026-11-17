@@ -3,6 +3,7 @@ import express from 'express';
 import { performance } from 'node:perf_hooks';
 import request from 'supertest';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { extractLivePreviewNumericCitations } from '../scripts/live-pr-preview-verifier.mjs';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { gamingGeneralizationCases } from './testUtils/gamingGeneralizationFixtures.js';
 import {
@@ -149,6 +150,7 @@ const frontierStartingFixture: Scenario = {
 let scenario = scenarios[0];
 let wrongCitation: 'none' | 'out_of_range' | 'mismatched_url' | 'unknown_url' = 'none';
 let useNumberedLink = false;
+let finalCitationOverride: ((source: number, url: string) => string) | undefined;
 let finalInterruption: 'none' | 'truncation' | 'refusal' | 'tool_output' = 'none';
 let sourceSuffix = '';
 let sourceTextLimit: number | undefined;
@@ -220,7 +222,8 @@ function draft(payload: any, forDelivery = false): string {
     if (forDelivery && wrongCitation === 'out_of_range') return claimDraft + ' [99]';
     const url = forDelivery && wrongCitation === 'mismatched_url' && index === 0 ? scenario.pages[1].url
       : forDelivery && wrongCitation === 'unknown_url' ? 'https://not-selected.example/guide' : claim.url;
-    const citation = useNumberedLink || url !== claim.url ? ' [' + source + '](' + url + ')' : ' [' + source + ']';
+    const citation = forDelivery && finalCitationOverride ? finalCitationOverride(source, url)
+      : useNumberedLink || url !== claim.url ? ' [' + source + '](' + url + ')' : ' [' + source + ']';
     if (replayColonisationTasks === 'structured' && forDelivery) {
       return index === 0
         ? [
@@ -238,6 +241,7 @@ beforeEach(() => {
   jest.clearAllMocks(); resetSafetyRuntimeStateForTests(); clearGamingDiscoveryCache();
   scenario = scenarios[0]; wrongCitation = 'none'; finalInterruption = 'none'; sourceSuffix = ''; searchUnavailable = false;
   useNumberedLink = false;
+  finalCitationOverride = undefined;
   finalCapabilityRefusal = 'none'; finalRefusalText = capabilityRefusal; sourceTextLimit = undefined; citeFallback = false; presentSteps = false; awkwardAnswer = false;
   finalQualificationPresentation = '';
   replayColonisationTasks = 'none';
@@ -764,6 +768,21 @@ it('delivers a presented guide with a numbered Markdown citation to a URL contai
   expect(stages).toEqual(['intake', 'reasoning', 'final']);
 });
 
+it('resolves each descriptive link to the source selected for its own claim', async () => {
+  scenario = scenarios[3];
+  finalCitationOverride = (_source, url) => ` [Chapter 2 guide](${url})`;
+  const result = await harness(false).complete();
+  expectPresentedProcedure(result);
+  expect(result.result.answer?.sources).toHaveLength(2);
+  for (const claim of scenario.claims) {
+    const line = result.result.answer?.response.split('\n').find(value => claim.answerProbe.test(value));
+    expect(line).toContain(finalCitationOverride(0, claim.url));
+    const indices = extractLivePreviewNumericCitations(line ?? '');
+    expect(indices.map(index => result.result.answer?.sources[index - 1]?.url)).toEqual([claim.url]);
+  }
+  expect(sdk).toHaveBeenCalledTimes(3);
+});
+
 it('withholds a complete Elite Dangerous guide missing its explicitly requested citations at structural citation validation', async () => {
   scenario = scenarios[2];
   omitFinalCitations = true;
@@ -878,8 +897,7 @@ describe('GTA IV opening mission controls', () => {
     expect(sdk).toHaveBeenCalledTimes(3);
   });
 
-  it.each(['Just got off the boat.', 'Just got off the boat at the beginning.'])
-  ('reaches a cited next step for %s when the owned opening hands off to an adjoining route section', async progressPoint => {
+  function adjacentOpeningScenario(progressPoint: string): Scenario {
     const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
     const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
     const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.';
@@ -887,17 +905,75 @@ describe('GTA IV opening mission controls', () => {
       + '<div class="walkthrough"><h2>Introduction</h2>' + checkpoint + ' ' + driving + '<br>'
       + '<h2>To The Apartment</h2>' + route
       + '<h2>Later in the mission</h2><p>Keep the LATER_MISSION_SENTINEL out of the player excerpt.</p></div>' };
-    scenario = storyScenario(progressPoint, article);
-    scenario.claims = [{ url: article.url, draft: 'Drive Roman to his apartment by following the yellow GPS marker.',
-      answerProbe: /Drive Roman to his apartment.*yellow GPS marker/iu,
-      support: [/step off the cargo ship/iu, /drive him back to his apartment/iu, /yellow marker on the radar/iu] }];
+    return { ...storyScenario(progressPoint, article), question: opening.question + ' Guide: ' + article.url,
+      claims: [{ url: article.url, draft: 'Drive Roman to his apartment by following the yellow GPS marker.',
+        answerProbe: /Drive Roman to his apartment.*yellow GPS marker/iu,
+        support: [/step off the cargo ship/iu, /drive him back to his apartment/iu, /yellow marker on the radar/iu] }] };
+  }
+
+  const openingProgress = 'Just got off the boat at the beginning.';
+  it.each([
+    { label: 'short checkpoint and compact reference', progressPoint: 'Just got off the boat.', citation: (source: number) => ` [${source}]` },
+    { label: 'full checkpoint and compact reference', progressPoint: openingProgress, citation: (source: number) => ` [${source}]` },
+    { label: 'full checkpoint and source label', progressPoint: openingProgress, citation: (source: number) => ` [Source ${source}]` },
+    { label: 'full checkpoint and descriptive link', progressPoint: openingProgress, citation: (_source: number, url: string) => ` [Opening walkthrough](${url})` },
+    { label: 'full checkpoint and bare source URL', progressPoint: openingProgress, citation: (_source: number, url: string) => ` ${url}` }
+  ])('delivers a cited next step with $label from the adjoining route section', async ({ progressPoint, citation }) => {
+    scenario = adjacentOpeningScenario(progressPoint);
+    finalCitationOverride = citation;
     const result = await submit();
-    expect(result.result).toMatchObject({ state: 'answer_ready', coverageSatisfied: true,
-      answer: { provenance: 'arcanos-trinity', sources: [{ url: article.url }] } });
-    expect(finalEvidence.some(chunk => chunk.url === article.url
-      && scenario.claims[0].support.every(probe => probe.test(chunk.text)))).toBe(true);
+    const claim = scenario.claims[0];
+    expect(acquired).toEqual([claim.url]);
+    expect(result.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, coverageSatisfied: true,
+      answer: { provenance: 'arcanos-trinity', sources: [{ url: claim.url }] } });
+    expect(result.result.selectedEvidenceIds).toHaveLength(1);
+    const answer = result.result.answer!;
+    const answerLine = answer.response.split('\n').find(line => claim.answerProbe.test(line));
+    const [sourceIndex] = extractLivePreviewNumericCitations(answerLine ?? '');
+    expect(answerLine).toContain(citation(1, claim.url));
+    expect(answer.sources[sourceIndex - 1]?.url).toBe(claim.url);
+    expect(finalEvidence.some(chunk => chunk.sourceIndex === sourceIndex && chunk.url === claim.url
+      && claim.support.every(probe => probe.test(chunk.text)))).toBe(true);
     expect(finalEvidence.map(chunk => chunk.text).join(' ')).not.toContain('LATER_MISSION_SENTINEL');
     expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { label: 'missing', citation: () => '' },
+    { label: 'an inline quotation', citation: () => ' “Reference [1]”' },
+    { label: 'a block quotation', citation: () => '\n\n> Reference [1]' },
+    { label: 'a continued block quotation', citation: () => '\n\n> Reference\n[1]' },
+    { label: 'a quoted literal URL', citation: (_source: number, url: string) => ` “ ${url} ”` },
+    { label: 'an escaped marker', citation: () => ' \\[1]' },
+    { label: 'an image link', citation: (_source: number, url: string) => ` ![Map](${url})` },
+    { label: 'an HTML attribute', citation: (_source: number, url: string) => ` <a href=${url}>` },
+    { label: 'too many references', citation: () => ' [1]'.repeat(129) },
+    { label: 'a URL label for a different document', citation: (_source: number, url: string) =>
+      ` [https://www.gta4.tv/gta4/guides/other-mission](${url})` }
+  ])('withholds the exact opening answer with $label as its only citation', async ({ citation }) => {
+    scenario = adjacentOpeningScenario(openingProgress);
+    finalCitationOverride = citation;
+    const result = await submit();
+    expect(result.result).toMatchObject({ coverageSatisfied: true, evidenceSelected: true, reason: 'GENERATION_UNAVAILABLE' });
+    expect(result.result.answer).toBeUndefined();
+    const claim = scenario.claims[0];
+    expect(finalOutputs).toEqual([claim.draft + citation(1, claim.url)]);
+    expect(stages).toEqual(['intake', 'reasoning', 'final']);
+    expect(sdk).toHaveBeenCalledTimes(3);
+  });
+
+  it('withholds the opening answer when the supplied guide cannot establish an additional requested gameplay fact', async () => {
+    scenario = adjacentOpeningScenario(openingProgress);
+    const url = scenario.pages[0].url;
+    scenario = { ...scenario, question: 'What should I do next, and where can I find the harbour key? Guide: ' + url };
+    const result = await submit();
+    expect(acquired).toEqual([url]);
+    expect(evaluations.at(-1)?.accepted[0]?.sourceAssessment.gates.identity).toBe('verified');
+    expect(result.result).toMatchObject({ coverageSatisfied: false, reason: 'QUESTION_COVERAGE_INSUFFICIENT' });
+    expect(result.result.answer).toBeUndefined();
+    expect(stages).toEqual([]);
+    expect(sdk).not.toHaveBeenCalled();
   });
 
   it('keeps a later GTA V walkthrough heading and its actions out of GTA IV evidence and the answer', async () => {

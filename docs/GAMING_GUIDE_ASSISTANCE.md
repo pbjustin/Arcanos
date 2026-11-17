@@ -1053,6 +1053,12 @@ Expiring evidence still triggers `EVIDENCE_REVALIDATION_REQUIRED`. Citation
 structure and presentation establish provenance and formatting, while the
 generated claims remain model-authored.
 
+Hybrid v2 requires grounded guide answers to cite the selected evidence.
+An exact selected-source Markdown link or URL retains its original text and
+receives the assigned source number alongside it when the answer has no
+numeric citation. References copied inside quoted excerpts cannot satisfy the
+requirement by themselves.
+
 When the selected source was partially extracted, delivery retains the exact
 standalone notice. Repeated copies in the leading notice block are collapsed,
 while distinct qualifications and quoted source text are preserved.
