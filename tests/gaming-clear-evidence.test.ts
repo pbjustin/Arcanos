@@ -230,6 +230,34 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
       .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
   });
 
+  test('retains the same structured checkpoint coverage with incidental whitespace', () => {
+    const input = { ...gtaProgressRequest,
+      prompt: 'What should I do next, what are the first two actions to reach the safehouse, and where is the hospital?' };
+    const statement = 'The hospital is beside the north gate in Liberty City.';
+    const row = 'Mechanic: Hospital | Value: ' + statement;
+    const data = knowledge(input.game, [row]);
+    const chunk = data.evidence![0];
+    const unit = {
+      id: 'hospital-location', kind: 'table_row' as const, text: row,
+      fields: [{ label: 'Mechanic', value: 'Hospital' }, { label: 'Value', value: statement }],
+      context: { scope: 'mechanic' as const }, integrity: { status: 'complete' as const, reasons: [] },
+      provenance: { sourceUrl: chunk.publicUrl, strategy: 'html_table' as const, representation: 'html_dom' as const,
+        policyVersion: 'gaming-evidence-units/v1' as const, locator: 'table[0]/tr[0]' }
+    };
+    chunk.evidenceUnits = [unit];
+    const clean = assessGamingRequestCoverage(input, data);
+    expect(clean.missingCoverage).toEqual(['requested topic 1']);
+    expect(clean.requirementUnitSupport?.[1].evidenceUnitIds).toEqual([unit.id]);
+    chunk.evidenceUnits = [{ ...unit, text: '  ' + row + '\n\n' }];
+    expect(assessGamingRequestCoverage(input, data)).toEqual(clean);
+    const planned = 'The plan says Niko climbs off the boat in Liberty City with Roman, then follows him to the hospital.';
+    const plannedRow = 'Mechanic: Hospital | Value: ' + planned;
+    chunk.text = plannedRow;
+    chunk.evidenceUnits = [{ ...unit, text: '  ' + plannedRow + '\n\n',
+      fields: [unit.fields[0], { label: 'Value', value: planned }] }];
+    expect(assessGamingRequestCoverage(input, data).requirementUnitSupport?.[1].evidenceUnitIds).toEqual([]);
+  });
+
   test('does not re-credit a filtered checkpoint claim for a separate multipart requirement', () => {
     const input = { ...gtaProgressRequest,
       prompt: 'What should I do next, what are the first two actions to reach the safehouse, and where is the hospital?' };

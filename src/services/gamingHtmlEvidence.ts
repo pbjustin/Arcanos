@@ -63,8 +63,9 @@ const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Ga
 const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|Versions?|Source use|Usage restrictions)\s*:?$/iu;
 interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
 const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
-const ARTICLE_SCOPE_BLOCKS = 'article,section,header,footer,nav,main,p,div,aside,h1,h2,h3,h4,h5,h6,blockquote,figure,ul,ol,li,table,br';
+const ARTICLE_SCOPE_BLOCKS = 'article,section,header,footer,nav,main,p,div,aside,h1,h2,h3,h4,h5,h6,blockquote,figure,ul,ol,li,table';
 const ARTICLE_SCOPE_INLINE = 'span,b,strong,em,i,small';
+const ARTICLE_INLINE_VISIBILITY = /(?:^|;)\s*(display|visibility|content-visibility)\s*:\s*([^;!]+?)(?:\s*(!\s*important))?\s*(?=;|$)/giu;
 const ARTICLE_PLATFORM_SCOPE_PREFIX = 'paragraph:article-platform:';
 const ARTICLE_PLATFORM_FIELD = /^Platforms?\s*:\s*([^.!?;|]{1,256})\.?$/iu;
 export const isGamingArticlePlatformUnit = (unit: GamingEvidenceUnit): boolean =>
@@ -98,21 +99,27 @@ function readArticleGameAssertions(value: string): { statements: string[]; compl
   return { statements, complete: owned.complete };
 }
 
-function readArticlePlatforms(value: string): { platforms: Set<string>; complete: boolean } {
+function readArticlePlatforms(value: string, proseOnly = false): { platforms: Set<string>; complete: boolean } {
   const declaration = gamingProsePlatformDeclarationPattern();
   const platforms = new Set<string>();
-  if (!declaration.test(value)) {
-    const field = ARTICLE_PLATFORM_FIELD.exec(value)?.[1].trim();
+  const prose = proseOnly ? value.replace(/\n/gu, ' ') : value;
+  if (!declaration.test(prose)) {
+    const field = proseOnly ? undefined : ARTICLE_PLATFORM_FIELD.exec(value)?.[1].trim();
     if (field) platforms.add(field);
     return { platforms, complete: true };
   }
-  const owned = gamingApplicabilityAssertionText(value);
+  const owned = gamingApplicabilityAssertionText(prose);
   const firstUnpairedQuote = owned.text.search(/["“‘`]|(?<![\p{L}\p{N}])'(?=\S)/u);
-  let complete = owned.complete;
+  let complete = true;
   declaration.lastIndex = 0;
-  for (const match of value.matchAll(declaration)) {
+  for (const match of prose.matchAll(declaration)) {
+    const end = match.index + match[0].length;
+    // Ignore declarations already read in their own intact line. Only a
+    // declaration interrupted by a soft break needs the joined witness.
+    if (proseOnly && !value.slice(match.index, end).includes('\n')) continue;
+    complete &&= owned.complete;
     // Preserve the original sentence boundary and skip masked quotation text.
-    if (owned.text.slice(match.index, match.index + match[0].length) !== match[0]) continue;
+    if (owned.text.slice(match.index, end) !== match[0]) continue;
     if (firstUnpairedQuote >= 0 && firstUnpairedQuote < match.index) complete = false;
     else platforms.add(match[1]);
   }
@@ -238,6 +245,20 @@ function text(value: string): string {
 function closed(element: Element): boolean {
   return Boolean((element as LocatedElement).sourceCodeLocation?.endTag);
 }
+function hasArticleInlineHidingStyle($: CheerioAPI, element: Element): boolean {
+  const style = $(element).attr('style');
+  if (!style) return false;
+  const winning = new Map<string, { value: string; important: boolean }>();
+  for (const [, property, value, priority] of style.matchAll(ARTICLE_INLINE_VISIBILITY)) {
+    const key = property.toLowerCase();
+    if (priority || !winning.get(key)?.important) {
+      winning.set(key, { value: value.trim().toLowerCase(), important: Boolean(priority) });
+    }
+  }
+  const visibility = winning.get('visibility')?.value;
+  return winning.get('display')?.value === 'none' || winning.get('content-visibility')?.value === 'hidden'
+    || visibility === 'hidden' || visibility === 'collapse';
+}
 function cleanElementText($: CheerioAPI, element: Element): string {
   const copy = $(element).clone();
   copy.find('script,style,template,table,ul,ol,dl').remove();
@@ -246,31 +267,55 @@ function cleanElementText($: CheerioAPI, element: Element): string {
   return text(copy.text());
 }
 /** Retain source-owned text runs separated by actual HTML block boundaries. */
-function articleScopeTextRuns($: CheerioAPI, element: Element, excluded: string): Array<{ value: string; intact: boolean }> {
-  const runs: Array<{ value: string; intact: boolean }> = [];
+function articleScopeTextRuns($: CheerioAPI, element: Element, excluded: string): Array<{ value: string; intact: boolean; platformProseOnly?: true }> {
+  const runs: Array<{ value: string; intact: boolean; platformProseOnly?: true }> = [];
+  let adjacentLines: Array<{ value: string; intact: boolean }> = [];
   const closedBlock = closed(element);
   let fragments: string[] = [];
   let intact = closedBlock;
   let authored = false;
-  const finish = () => {
-    if (authored) runs.push({ value: text(fragments.join('')), intact });
+  const finish = (lineBreak = false) => {
+    const value = text(fragments.join(''));
+    if (authored) {
+      const run = { value, intact };
+      runs.push(run);
+      adjacentLines.push(run);
+    }
+    // A line break may continue a prose platform declaration, but separate
+    // lines still bound labelled fields. Never join across another HTML block.
+    if (!lineBreak || value && !authored) {
+      if (adjacentLines.length > 1) runs.push({ value: adjacentLines.map(run => run.value).join('\n'),
+        intact: adjacentLines.every(run => run.intact), platformProseOnly: true });
+      adjacentLines = [];
+    }
     fragments = [];
     intact = closedBlock;
     authored = false;
   };
   for (const child of $(element).contents().toArray()) {
-    if (child.type === 'comment') continue;
-    if ($(child).is(ARTICLE_SCOPE_BLOCKS)) {
+    if (child.type === 'comment' || hasArticleInlineHidingStyle($, child)) continue;
+    const node = $(child);
+    if (node.is('br')) {
+      finish(true);
+      continue;
+    }
+    if (node.is(ARTICLE_SCOPE_BLOCKS)) {
       finish();
       continue;
     }
-    if ($(child).is('q')) {
-      fragments.push('"', $(child).text(), '"');
+    // Project visibility only for this attribution scan. The complete source
+    // and its parser locations stay available for later extraction checks.
+    const inlineHidden = (_index: number, inline: Element) => hasArticleInlineHidingStyle($, inline);
+    const needsProjection = node.find('[style]').filter(inlineHidden).length > 0;
+    const visible = needsProjection ? node.clone() : node;
+    if (needsProjection) visible.find('[style]').filter(inlineHidden).remove();
+    if (visible.is('q')) {
+      fragments.push('"', visible.text(), '"');
       continue;
     }
-    const value = $(child).text();
-    const authoredNode = child.type === 'text' || $(child).is(ARTICLE_SCOPE_INLINE) && closed(child) && !$(child).is(excluded)
-      && $(child).find('*').toArray().every(inline => $(inline).is(ARTICLE_SCOPE_INLINE) && closed(inline) && !$(inline).is(excluded));
+    const value = visible.text();
+    const authoredNode = child.type === 'text' || visible.is(ARTICLE_SCOPE_INLINE) && closed(child) && !visible.is(excluded)
+      && visible.find('*').toArray().every(inline => $(inline).is(ARTICLE_SCOPE_INLINE) && closed(inline) && !$(inline).is(excluded));
     fragments.push(value);
     intact &&= authoredNode;
     // A scope statement carried only by a link is a reference, not a publisher assertion.
@@ -406,11 +451,15 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       .filter(aside => hasSeparateArticleGuideScope($, aside, excluded)));
     for (const node of [article, ...$(article).find('p,div,section,aside,h2,h3,h4,h5,h6,li').toArray()]) {
       if (deadlineExpired()) return result;
-      for (const { value, intact } of articleScopeTextRuns($, node, excluded)) {
-        const { statements, complete: gameScopeComplete } = readArticleGameAssertions(value);
-        const { platforms, complete: platformScopeComplete } = readArticlePlatforms(value);
+      const element = $(node);
+      if (element.closest(excluded).length || element.parents('[style]').addBack('[style]').toArray()
+        .some(ancestor => hasArticleInlineHidingStyle($, ancestor))) continue;
+      for (const { value, intact, platformProseOnly } of articleScopeTextRuns($, node, excluded)) {
+        const { statements, complete: gameScopeComplete } = platformProseOnly
+          ? { statements: [], complete: true } : readArticleGameAssertions(value);
+        const { platforms, complete: platformScopeComplete } = readArticlePlatforms(value, platformProseOnly);
         const complete = gameScopeComplete && platformScopeComplete;
-        if ((complete && !statements.length && !platforms.size) || $(node).closest(excluded).length) continue;
+        if (complete && !statements.length && !platforms.size) continue;
         if (detachedGuides.size && $(node).parents('aside').addBack('aside').toArray().some(aside => detachedGuides.has(aside)))
           continue;
         if (!intact || !complete) {

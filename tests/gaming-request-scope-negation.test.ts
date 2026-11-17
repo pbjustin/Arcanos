@@ -84,18 +84,24 @@ describe('explicit base-game and negative expansion request scope', () => {
   test.each([
     'The supplied guide says it covers the base game, but explain DLC combat.',
     'The supplied guide says it covers the base game, but please explain DLC combat.',
-    'The supplied guide says it covers the base game, but can you explain DLC combat?'
+    'The supplied guide says it covers the base game, but can you explain DLC combat?',
+    'The supplied guide says it covers the base game, but what about DLC combat?',
+    "The supplied guide says it covers the base game, but I'd like DLC combat advice.",
+    'The supplied guide says it covers the base game, but I’d like DLC combat advice.',
+    'The supplied guide says it covers the base game, but now explain DLC combat.'
   ])('preserves an independent DLC request following a source description for %s', prompt => {
-    const input = { game: 'Xenoblade Chronicles 2', prompt };
+    const input = { game: 'Elden Ring', prompt };
     const edition = resolveGamingRequestEdition(input);
     expect(edition).toBeUndefined();
     expect(gamingRequestTargetsExtraContent(input)).toBe(true);
     expect(gamingEditionEvidenceMatchesRequest(undefined, edition, input)).toBe(false);
+    expect(gamingEditionEvidenceMatchesRequest('base-game', edition, input)).toBe(false);
   });
 
   test.each([
     'The supplied guide says it covers the base game, but also includes DLC combat. Explain combat.',
     'The supplied guide is titled "The Base Game, but Explain DLC Combat". Explain combat.',
+    'The supplied guide is titled "The Base Game, but What About DLC Combat?" Explain combat.',
     'The supplied guide is titled "The Base Game, but Explain DLC Combat." Explain combat.'
   ])('does not take attributed contrasts as independent requests for %s', prompt => {
     expect(gamingRequestTargetsExtraContent({ game: 'Xenoblade Chronicles 2', prompt })).toBe(false);

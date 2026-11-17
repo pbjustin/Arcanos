@@ -900,7 +900,8 @@ describe('GTA IV opening mission controls', () => {
   function adjacentOpeningScenario(progressPoint: string): Scenario {
     const checkpoint = 'After watching the introduction where Niko and his fellow passengers step off the cargo ship at Liberty City, Roman has arrived to collect you.';
     const driving = "Once you're in his car, you'll need to drive him back to his apartment.";
-    const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.';
+    const route = 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment. '
+      + 'If you go off course it will automatically update.';
     const article = { ...storyArticle, body: '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
       + '<div class="walkthrough"><h2>Introduction</h2>' + checkpoint + ' ' + driving + '<br>'
       + '<h2>To The Apartment</h2>' + route
@@ -912,6 +913,34 @@ describe('GTA IV opening mission controls', () => {
   }
 
   const openingProgress = 'Just got off the boat at the beginning.';
+  it('withholds the scoped identity when the registered actor is a bystander to the checkpoint', async () => {
+    const bystanderLead = storyLead.replace('After Niko climbs off the ship in Liberty City, Roman has arrived at the docks to meet him.',
+      'A sailor beside Niko climbs off the boat in Liberty City while Roman waits.');
+    scenario = storyScenario(openingProgress, { ...storyArticle, body: storyArticle.body.replace(storyLead, bystanderLead) });
+    const result = await submit();
+    expect(documents.at(-1)?.metadata.articleScope?.lead).toBe(bystanderLead);
+    expect(evaluations.at(-1)!.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(result.result.answer).toBeUndefined();
+    expect(sdk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Do not follow this marker; the route is obsolete.',
+    'Do not follow it.',
+    'It is obsolete.',
+    'Only follow this marker if the other route is blocked.'
+  ])('retains the lead but excludes the route when later guidance qualifies it: %s', async qualification => {
+    scenario = adjacentOpeningScenario(openingProgress);
+    const [article] = scenario.pages;
+    article.body = article.body.replace('This is your GPS indicator for the apartment.',
+      'This is your GPS indicator for the apartment. ' + qualification);
+    await submit();
+    const scope = documents.at(-1)?.metadata.articleScope;
+    expect(scope?.lead).toContain('drive him back to his apartment.');
+    expect(scope).not.toHaveProperty('continuation');
+    expect(finalEvidence.map(chunk => chunk.text).join(' ')).not.toContain('Follow the yellow marker on the radar.');
+  });
+
   it.each([
     { label: 'short checkpoint and compact reference', progressPoint: 'Just got off the boat.', citation: (source: number) => ` [${source}]` },
     { label: 'full checkpoint and compact reference', progressPoint: openingProgress, citation: (source: number) => ` [${source}]` },

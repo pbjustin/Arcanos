@@ -707,6 +707,53 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       expect(evaluated.accepted).toEqual([]);
     });
   });
+  it('binds a retained article-scoped record to its exact acquired chunk offsets', async () => {
+    const sourceUrl = 'https://heldout-guides.example/articles/the-cousins-bellic';
+    const lead = 'After Niko steps off the boat in Liberty City, Roman has arrived to collect you. '
+      + "Once you're in his car, you'll need to drive him back to his apartment.";
+    const request = { game: 'Grand Theft Auto IV', mode: 'guide' as const, prompt: 'What should I do next?',
+      progressPoint: 'Just got off the boat.', spoilerMode: 'light' as const };
+    mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
+      data: '<html><head><title>The Cousins Bellic</title></head><body><article>'
+        + '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+        + '<div class="walkthrough"><h2>Introduction</h2>' + lead + '<br><h2>To The Apartment</h2>'
+        + 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.</div></article></body></html>' }));
+    const evaluated = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2',
+      candidates: [{ url: sourceUrl }] }, actor);
+    expect(evaluated.accepted).toHaveLength(1);
+    const [artifact] = evaluated.accepted;
+    expect(artifact.sourceAssessment.dimensionScores.alignment.reasonCodes).toContain('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
+    expect(artifact.evidenceRecords).toHaveLength(1);
+    const [record] = artifact.evidenceRecords!;
+    const full = selectGamingHybridAcceptedEvidence(request, [artifact], actor);
+    expect(full.evidence?.map(chunk => chunk.recordId)).toEqual([record.recordId]);
+    expect(() => assertGamingHybridEvidenceMembership(full, [artifact], actor)).not.toThrow();
+
+    // Repartition the server-acquired rendering at its paragraph boundary. An
+    // individual retained record can be shorter than the complete rendering.
+    const startChar = 0;
+    const endChar = record.searchText.indexOf('\nTo The Apartment');
+    expect(endChar).toBeGreaterThan(0);
+    const text = record.searchText.slice(startChar, endChar);
+    const chunk = { ordinal: 0, totalChunks: 2, startChar, endChar };
+    const scoped = { ...record, searchText: text, normalized: { text, chunk } };
+    artifact.evidenceRecords = [scoped];
+    const selected = selectGamingHybridAcceptedEvidence(request, [artifact], actor);
+    expect(selected.evidence).toEqual([expect.objectContaining({ text: lead, startChar, endChar })]);
+    expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).not.toThrow();
+
+    for (const normalizedChunk of [undefined, { ...chunk, startChar: '0' }, { ...chunk, startChar: -1 },
+      { ...chunk, startChar: 1, endChar: endChar + 1 }, { ...chunk, endChar: endChar + 1 },
+      { ...chunk, startChar: record.searchText.length, endChar: record.searchText.length + text.length }]) {
+      artifact.evidenceRecords = [{ ...scoped, normalized: { text, chunk: normalizedChunk } }];
+      expect(selectGamingHybridAcceptedEvidence(request, [artifact], actor).evidence ?? []).toEqual([]);
+      expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).toThrow('Selected evidence does not belong');
+    }
+    artifact.evidenceRecords = [{ ...scoped, searchText: text + ' Unbound extra text.' }];
+    expect(selectGamingHybridAcceptedEvidence(request, [artifact], actor).evidence ?? []).toEqual([]);
+    expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).toThrow('Selected evidence does not belong');
+  });
+
   function readableDocument() {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
       data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.

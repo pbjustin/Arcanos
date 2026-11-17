@@ -79,6 +79,16 @@ function selectOverlapStart(text: string, start: number, end: number): number {
     ? earliest + word.index + word[0].length : end;
 }
 
+/** Normalize the text addressed by chunk offsets before segmentation or verification. */
+export function normalizeGamingDocumentChunkText(input: string): { text: string; inputTruncated: boolean } {
+  const bound = unicodeBoundary(input, Math.min(input.length, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars));
+  const text = input.slice(0, bound)
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '\uFFFD')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, ' ')
+    .trim();
+  return { text, inputTruncated: input.length > bound };
+}
+
 /**
  * Durable document segmentation. Offsets address the returned accepted text in UTF-16
  * code units, always at code-point boundaries. A 500-record prefix is explicit partial
@@ -99,11 +109,7 @@ export async function chunkGamingDocument(
   options.signal?.throwIfAborted();
   const policyVersion = options.policyVersion ?? GAMING_DOCUMENT_CHUNKING_VERSION;
   if (!/^[a-zA-Z0-9._-]{1,80}$/u.test(policyVersion)) throw new TypeError('Invalid Gaming chunk policy version.');
-  const bound = unicodeBoundary(input, Math.min(input.length, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars));
-  const text = input.slice(0, bound)
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '\uFFFD')
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, ' ')
-    .trim();
+  const { text, inputTruncated } = normalizeGamingDocumentChunkText(input);
   const chunks: GamingDocumentChunk[] = [];
   const structuralRanges: Array<{ start: number; end: number; unit: GamingEvidenceUnit }> = [];
   for (const unit of markGamingEvidenceUnitConflicts(options.evidenceUnits ?? [])) {
@@ -156,7 +162,7 @@ export async function chunkGamingDocument(
     start = containing || following?.start === end ? end : selectOverlapStart(text, start, end);
   }
   for (const chunk of chunks) chunk.totalChunks = chunks.length;
-  const documentTruncated = input.length > bound || indexedChars < text.length || omittedUnits;
+  const documentTruncated = inputTruncated || indexedChars < text.length || omittedUnits;
   return {
     text, chunks, documentChars: text.length, indexedChars, documentTruncated,
     coverageStatus: documentTruncated ? 'partial' : 'complete', chunkingVersion: policyVersion

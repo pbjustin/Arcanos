@@ -43,7 +43,7 @@ function gamingRequestScopeText(question: string): string {
         // Keep offsets while masking titles, including quotes cut off by the sentence boundary.
         const unquoted = description.replace(/"[^"\n]*(?:"|$)|“[^”\n]*(?:”|$)|`[^`\n]*(?:`|$)|‘[^’\n]*(?:’|$)|(?<![\p{L}\p{N}])'[^'\n]*(?:'(?![\p{L}\p{N}])|$)/gu,
           quote => ' '.repeat(quote.length));
-        const request = /\b(?:but|however|instead|yet)\b\s*,?\s+(?=(?:please|(?:can|could|would|will)\s+you|i\s+(?:want|need|would\s+like)|(?:how|what|which|where|when|why)\s+(?:do|does|can|could|should|is|are)|explain|describe|recommend|tell|show|list|include)\b)/iu.exec(unquoted);
+        const request = /\b(?:but|however|instead|yet)\b\s*,?\s+(?=(?:please|(?:can|could|would|will)\s+you|i\s+(?:want|need|would\s+like)|i['’]d\s+like|what\s+about|(?:how|what|which|where|when|why)\s+(?:do|does|can|could|should|is|are)|(?:now\s+)?(?:explain|describe|recommend|tell|show|list|include))\b)/iu.exec(unquoted);
         return request ? ` ${description.slice(request.index)}` : ' ';
       });
 }

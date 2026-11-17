@@ -294,6 +294,7 @@ describe('shared Gaming document acquisition contract', () => {
   it.each([
     ['an article-owned list item', '<ul><li>This walkthrough applies only to Xbox 360.</li></ul>'],
     ['an article-owned paragraph after another sentence', '<p>These notes explain the release. This walkthrough applies only to Xbox 360.</p>'],
+    ['a sentence split by an HTML line break', '<p>This walkthrough applies only to<br>Xbox 360.</p>'],
     ['an authored statement after a quotation', '<p>A list reads "The release differs. This walkthrough applies only to PC. An unrelated quote ends here". This walkthrough applies only to Xbox 360.</p>']
   ])('retains a platform declaration from %s outside selected prose', async (_case, content) => {
     mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + '<aside>' + content + '</aside></article>', 'text/html'));
@@ -301,6 +302,42 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.extraction.selectedContainer).toBe('#article-body');
     expect(document.text).not.toMatch(/This walkthrough applies only to/iu);
     expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' })).toMatchObject({ platforms: ['Xbox 360'] });
+  });
+
+  it('keeps a labelled platform field separate from the next HTML line', async () => {
+    const aside = '<aside><p>Platforms: PS4<br>PS5 compatibility has not been verified.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' })).toMatchObject({ platforms: ['PS4'] });
+  });
+
+  it.each([
+    ['block ancestor', '<div style="display: none !important; display: block"><p>This walkthrough applies only to PC.</p></div>'],
+    ['direct inline node', '<p><span style="display:none">This walkthrough applies only to PC.</span></p>'],
+    ['nested inline node', '<p><span><strong style="visibility: hidden">This walkthrough applies only to PC.</strong></span></p>']
+  ])('excludes a platform statement in a style-hidden %s and retains ordinary styled notes', async (_case, hidden) => {
+    const aside = '<aside>' + hidden + '<p style="color: navy">This walkthrough applies only to Xbox 360.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(document.text).not.toMatch(/This walkthrough applies only to/iu);
+    const metadata = extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' });
+    expect(metadata.platforms).toEqual(['Xbox 360']);
+    expect(metadata.metadataConflict).toBeUndefined();
+  });
+
+  it('keeps restrictions visible when a later inline declaration overrides a hiding style', async () => {
+    const aside = '<aside><p style="display: none; display: block">This walkthrough applies only to Xbox 360.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' }).platforms).toEqual(['Xbox 360']);
+  });
+
+  it('keeps an intact platform line verified when the next HTML line contains a reference', async () => {
+    const aside = '<aside><p>This walkthrough applies only to Xbox 360.<br>See <a href="/other">another guide</a> for other releases.</p></aside>';
+    mockAxiosGet.mockResolvedValue(response('<article>' + openingHeader + openingBody + aside + '</article>', 'text/html'));
+    const document = await resolveGamingDocument(openingUrl);
+    expect(extractGamingFreshnessMetadata(document, { game: 'Grand Theft Auto IV' }).platforms).toEqual(['Xbox 360']);
+    expect(document.metadata.applicabilityUnverified).toBeUndefined();
   });
 
   it('keeps conflicting platform declarations in the same omitted paragraph', async () => {

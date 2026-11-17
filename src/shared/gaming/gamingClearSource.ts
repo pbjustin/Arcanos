@@ -223,7 +223,7 @@ function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegist
     `${literals(action.verbs)}${objectModifiers}${literals(action.objects)}`, 'iu'));
   const subjectGroupTail = '(?:\\s+(?:and|with)\\s+(?:(?:his|her|their)\\s+)?(?:(?:fellow|other|the|a|an)\\s+)?[\\p{L}][\\p{L}\\u2019\\x27-]*){0,4}';
   const actors = topic.actions.map(action => action.actors?.map(actor =>
-    new RegExp(literals([actor]) + subjectGroupTail + '\\s*$', 'iu')));
+    new RegExp('^' + literals([actor]) + subjectGroupTail + '$', 'iu')));
   if (candidateOnly) {
     const claims = gamingAttributableClaimText(lead, game).split('\n');
     return claims.some(claim => actions.some(action => action.test(claim)));
@@ -236,9 +236,9 @@ function hasCorroboratingGuideLead(lead: string, topic: NonNullable<GamingRegist
       if (!match) return false;
       const actionActors = actors[index];
       if (!actionActors?.length) return true;
-      const prefix = claim.slice(Math.max(0, match.index - IDENTITY_SCOPE_SCAN_LIMITS.subjectChars), match.index);
-      const subject = prefix.split(/(?:\b(?:while|whereas|although|because|since|when|if|unless|after|before|as|but)\b|[,;:])/iu).at(-1)?.trim() ?? '';
-      return actionActors.some(actor => actor.test(subject));
+      const prefix = claim.slice(0, match.index);
+      const subject = prefix.split(/(?:\b(?:while|where|whereas|although|because|since|when|if|unless|after|before|as|but)\b|[,;:])/iu).at(-1)?.trim() ?? '';
+      return subject.length <= IDENTITY_SCOPE_SCAN_LIMITS.subjectChars && actionActors.some(actor => actor.test(subject));
     }))) return true;
   }
   return false;

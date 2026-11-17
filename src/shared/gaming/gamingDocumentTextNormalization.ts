@@ -38,6 +38,12 @@ const ARTICLE_ROUTE_APPROACH = new RegExp(String.raw`^(?:(?:then|next)[,:]?\s+|(
 const ARTICLE_ROUTE_NON_AFFIRMING = /[?"“”]|\b(?:not|never|unless|if|might|could|would|maybe|perhaps|whether|plan|planned|planning|supposed|speculative|reported|alleged|unlike|instead|guide|walkthrough|wiki|article|page|links?)\b|n['’]t\b/iu;
 const ARTICLE_ROUTE_ACTION = /^(?:follow|head\s+(?:to|towards?)|go\s+to)\s+(?:(?:the|this|that|your)\s+)?(?:[\p{L}\p{N}-]+\s+){0,3}(?:marker|beacon|waypoint|route|path)\b[^.!?]{0,100}\.$/iu;
 const ARTICLE_ROUTE_DETAIL = /^(?:this|it)\s+is\s+(?:your|the)\s+(?:gps|marker|beacon|waypoint|route|radar)\b[^.!?]{0,120}\.$/iu;
+const ARTICLE_ROUTE_REFERENT = String.raw`(?:(?:[\p{L}\p{N}-]+\s+){0,4}(?:marker|beacon|waypoint|route|path|gps)|it|them|this|that)\b`;
+const ARTICLE_ROUTE_LATER_GUIDANCE = new RegExp(
+  String.raw`\b(?:follow|use|take|trust|head\s+(?:to|towards?)|go\s+to)\s+${ARTICLE_ROUTE_REFERENT}`, 'iu');
+const ARTICLE_ROUTE_LATER_INVALIDATION = new RegExp(
+  String.raw`\b(?:(?:ignore|avoid)\s+${ARTICLE_ROUTE_REFERENT}|${ARTICLE_ROUTE_REFERENT}\s+(?:is|are|becomes?|remains?|(?:may|might|could)\s+be)\s+(?:now\s+)?`
+  + String.raw`(?:obsolete|outdated|invalid|inactive|disabled|unavailable|misleading|incorrect|wrong|(?:not|no\s+longer)\s+(?:valid|active|accurate)))\b`, 'iu');
 type ArticleLocatedElement = cheerio.Element & { sourceCodeLocation?: { endTag?: unknown } };
 const articleElementClosed = (element: cheerio.Element) => Boolean((element as ArticleLocatedElement).sourceCodeLocation?.endTag);
 const normalizeArticleLead = (text: string) => normalizeGamingDocumentInstructionCharacters(text).replace(/\s+/gu, ' ').trim();
@@ -144,7 +150,11 @@ function readArticleLead($: ReturnType<typeof load>, article: cheerio.Element, h
     const normalized = normalizeArticleLead(prose);
     const first = /^[^.!?]{1,160}\.(?=\s|$)/u.exec(normalized)?.[0];
     if (!first || !ARTICLE_ROUTE_ACTION.test(first) || ARTICLE_ROUTE_NON_AFFIRMING.test(first)) return undefined;
-    const detail = /^[^.!?]{1,160}\.(?=\s|$)/u.exec(normalized.slice(first.length).trimStart())?.[0];
+    const rest = normalized.slice(first.length).trimStart();
+    // Inspect all later sentences for qualifications of the route itself.
+    if (rest.match(/[^.!?]+[.!?]?/gu)?.some(sentence => ARTICLE_ROUTE_LATER_INVALIDATION.test(sentence)
+      || ARTICLE_ROUTE_LATER_GUIDANCE.test(sentence) && ARTICLE_ROUTE_NON_AFFIRMING.test(sentence))) return undefined;
+    const detail = /^[^.!?]{1,160}\.(?=\s|$)/u.exec(rest)?.[0];
     const route = detail && ARTICLE_ROUTE_DETAIL.test(detail) && !ARTICLE_ROUTE_NON_AFFIRMING.test(detail)
       ? first + ' ' + detail : first;
     return { heading: routeHeading, text: route };

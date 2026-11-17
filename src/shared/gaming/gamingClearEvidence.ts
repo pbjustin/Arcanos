@@ -303,7 +303,10 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
       const supportingUnits = chunk.evidenceUnits.filter(unit => {
         // Do not let requirement-level lexical checks re-credit the original
         // row after checkpoint claim filtering removed its registered action.
-        if (filterProgressionTopicClaims && gamingClearGuideTopicCoverageText(unit.text, input.game) !== unit.text) return false;
+        if (filterProgressionTopicClaims) {
+          const claimLines = unit.text.split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+          if (gamingClearGuideTopicCoverageText(claimLines, input.game) !== claimLines) return false;
+        }
         const assessment = assessGamingStructuralUsability({ units: [unit], ...input, prompt: requirement.terms.join(' ') });
         if (!(assessment.claimShape === 'none' ? assessment.hasIntactUsableUnit : assessment.claimSupported)) return false;
         if (isGamingSemanticCoverageRequirement(requirement)) return unit.fields.map(field => supportsRequirement(field.value)).some(Boolean);
