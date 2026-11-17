@@ -190,7 +190,7 @@ jobs:
         run: |
           npm run type-check
           npm run lint
-          npm run build
+          RAILWAY_GIT_COMMIT_SHA="${EXPECTED_SHA}" npm run build
           npm run validate:railway
 
       - name: Run offline positive and negative acceptance regressions

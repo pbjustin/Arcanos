@@ -164,6 +164,11 @@ test('candidate code stays isolated from control-plane, signing and provider cre
   assert.doesNotMatch(JSON.stringify(live), /secrets\.(?:OPENAI_API_KEY|ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY|RAILWAY_PRODUCTION)/u);
 });
 
+test('hosted build binds its build identity to the same candidate SHA as Railway', () => {
+  const build = named(offline, 'Validate candidate build and static contracts');
+  assert.match(build.run, /^RAILWAY_GIT_COMMIT_SHA="\$\{EXPECTED_SHA\}" npm run build$/mu);
+});
+
 test('actions and scanner stay pinned; candidate scans block while historical triage stays independent', () => {
   for (const job of Object.values(workflow.jobs)) for (const step of job.steps)
     if (step.uses) assert.ok(actions.has(step.uses), `Unreviewed action ${step.uses}`);
