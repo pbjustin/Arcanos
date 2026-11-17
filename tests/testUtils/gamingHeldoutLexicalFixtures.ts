@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { GamingKnowledgeProvenanceRecord, PersistGamingSourceRevisionInput } from '../../src/core/db/repositories/gamingSourceRepository.js';
 import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } from '../../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '../../src/shared/gaming/gamingFreshnessCore.js';
+import { GAMING_SOURCE_POLICY_VERSION } from '../../src/shared/gaming/gamingFreshnessCore.js';
 import { normalizeGamingGameIdentity } from '../../src/shared/gaming/gamingGameIdentity.js';
-import type { GamingStoredKnowledgeInput } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { GAMING_STORED_APPLICABILITY_VERSION, type GamingStoredKnowledgeInput } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 export const HELDOUT_GAMING_LEXICAL_VERSION = 'gaming-heldout-lexical/v1';
 export const HELDOUT_GAMING_HEAD = 'c6c05d799d276c35ca2f76588f209b45ba7c0fb1';
@@ -83,7 +83,7 @@ export function heldoutGamingRecord(passage: HeldoutGamingPassage): GamingKnowle
     : passage.restriction === 'reference_only' ? 'reference_only' : 'verified';
   const provenance: Record<string, unknown> = { sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
     classification, generationEligible: classification === 'verified', gamingClear: assessment, approvedContentHash: contentHash,
-    edition, acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION,
+    edition, acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION,
       contentHash: passage.restriction === 'malformed_provenance' ? '0'.repeat(64) : contentHash, game, edition,
       platforms: [passage.platform ?? 'PC'] },
     hybridFreshness: { id: refs[0], url: publicUrl, policyVersion: GAMING_SOURCE_POLICY_VERSION, game, edition,

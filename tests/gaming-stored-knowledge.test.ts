@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
 import { createGamingClearAssessment, GAMING_CLEAR_POLICY_VERSION } from '../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const search = jest.fn<(...args: unknown[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
 const findSources = jest.fn<(...args: unknown[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
@@ -11,6 +11,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logg
 const { buildStoredGamingLexicalQuery, selectStoredGamingEvidence, formatStoredGamingEvidence, retrieveStoredGamingKnowledge } =
   await import('../src/services/gamingStoredKnowledge.js');
 const storedEvidenceCore = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
+const { GAMING_STORED_APPLICABILITY_VERSION } = storedEvidenceCore;
 
 const input = { game: 'Synthetic Quest', prompt: 'Where is the Zephyrglass Compass?', mode: 'guide' as const };
 function record(id: string, text: string, overrides: Partial<GamingKnowledgeProvenanceRecord> = {}): GamingKnowledgeProvenanceRecord {
@@ -156,7 +157,7 @@ describe('bounded stored Gaming chunk evidence', () => {
       dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
     stored.provenance = { ...stored.provenance, approvedContentHash: subjectHash, gamingClear: assessment,
       hybridFreshness: { id: stored.sourceId, url: stored.publicUrl, game: input.game, policyVersion: GAMING_SOURCE_POLICY_VERSION },
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: stored.contentHash,
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: stored.contentHash,
         game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false } };
     search.mockResolvedValue([stored]);
     const current = await retrieveStoredGamingKnowledge(request,
@@ -184,7 +185,7 @@ describe('bounded stored Gaming chunk evidence', () => {
   ])('an unassessed historical %s snapshot remains readable without current independent identity authority', async (_label, text) => {
     const request = { ...input, platform: 'PC', region: 'EU', edition: 'base-game', hybridRetrieval: true, requireRequestCoverage: true };
     const stored = record('historical-unapproved', text, { provenance: {
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: 'c'.repeat(64),
         game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
     } });
     search.mockResolvedValue([stored]);
@@ -206,7 +207,7 @@ describe('bounded stored Gaming chunk evidence', () => {
     const text = 'In the game Synthetic Quest, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
     const stored = record('current-independent-source', text, { provenance: {
       sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: 'c'.repeat(64),
         game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
     } });
     search.mockResolvedValue([stored]);
@@ -223,7 +224,7 @@ describe('bounded stored Gaming chunk evidence', () => {
       const text = 'In the game Synthetic Quest, the Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
       const stored = record('retained-nonauthoritative', text, { provenance: {
         classification, generationEligible: false, sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
-        acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64),
+        acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: 'c'.repeat(64),
           game: input.game, edition: 'base-game', platforms: ['PC'], regions: ['EU'], metadataConflict: false, metadataUnverified: false }
       } });
       search.mockResolvedValue([stored]);

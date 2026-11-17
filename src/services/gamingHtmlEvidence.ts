@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { preservePrimaryContentSidebarLayouts } from '@shared/gaming/gamingDocumentTextNormalization.js';
-import { normalizeGamingComparableIdentity } from '@shared/gaming/gamingGameRegistry.js';
+import { preservePrimaryContentSidebarLayouts, readGamingArticleOwner, readGamingArticleScope,
+  type GamingArticleScope } from '@shared/gaming/gamingDocumentTextNormalization.js';
+import { detectGamingRegistryAlias, gamingApplicabilityAssertionText, normalizeGamingComparableIdentity,
+  resolveGamingRegistryGame } from '@shared/gaming/gamingGameRegistry.js';
+import { gamingAcquiredGameDeclarationPattern } from '@shared/gaming/gamingGameDeclaration.js';
+import { gamingPrimarySourceDeclarationPattern } from '@shared/gaming/gamingStructuralEvidence.js';
+import { gamingProsePlatformDeclarationPattern } from '@shared/gaming/gamingPlatformIdentity.js';
 import { gamingAttributableClaimText } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { countGamingHtmlElements, filterGamingDocumentInstructions, hasGamingActionableProse, GAMING_DOCUMENT_FURNITURE_SELECTOR,
   gamingDocumentExtractionProfile, gamingDocumentFetchOptions } from '@services/gamingDocumentExtraction.js';
@@ -31,6 +36,11 @@ export interface GamingHtmlLocalTopicReference {
 export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtractionResult {
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
+  originalArticleScope?: GamingArticleScope;
+  /** Acquired blocks checked for source-wide contradictions only. */
+  articleScopeAssertions?: string[];
+  articleScopeHeading?: string;
+  articleScopeUnverified?: true;
   /** Parser-owned local article references; the resolver retains only bound spans. */
   localTopicReferences?: GamingHtmlLocalTopicReference[];
   /** Layout search exhaustion cannot establish unrestricted source scope. */
@@ -53,6 +63,68 @@ const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Ga
 const APPLICABILITY_LIST_LABEL = /^(Platforms?|Regions?|Editions?|Patch(?:es)?|Versions?|Source use|Usage restrictions)\s*:?$/iu;
 interface ApplicabilityListLabel { label: string; complete: boolean; preserveOnly: boolean; exhausted?: true }
 const APPLICABILITY_LAYOUT_LIMITS = Object.freeze({ ancestors: 16, siblings: 32 });
+const ARTICLE_SCOPE_BLOCKS = 'article,section,header,footer,nav,main,p,div,aside,h1,h2,h3,h4,h5,h6,blockquote,figure,ul,ol,li,table';
+const ARTICLE_SCOPE_INLINE = 'span,b,strong,em,i,small';
+const ARTICLE_INLINE_VISIBILITY = /(?:^|;)\s*(display|visibility|content-visibility)\s*:\s*([^;!]+?)(?:\s*(!\s*important))?\s*(?=;|$)/giu;
+const ARTICLE_PLATFORM_SCOPE_PREFIX = 'paragraph:article-platform:';
+const ARTICLE_PLATFORM_FIELD = /^Platforms?\s*:\s*([^.!?;|]{1,256})\.?$/iu;
+export const isGamingArticlePlatformUnit = (unit: GamingEvidenceUnit): boolean =>
+  unit.context.scope.startsWith(ARTICLE_PLATFORM_SCOPE_PREFIX);
+const ARTICLE_NAMED_GAME_SCOPE = /(?:^|[.!?;]\s+)In the game\s+/iu;
+
+const MAX_ARTICLE_ASSERTION_CHARS = 512;
+
+function hasArticleGameAssertion(value: string): boolean {
+  if (gamingAcquiredGameDeclarationPattern().test(value) || gamingPrimarySourceDeclarationPattern().test(value)
+    || ARTICLE_NAMED_GAME_SCOPE.test(value)) return true;
+  return [...value.matchAll(/(?:^|[.!?;]\s+)In\s+([^,.!?;]{1,160}),/giu)]
+    .some(([, subject]) => resolveGamingRegistryGame(subject.trim()) !== undefined);
+}
+
+/** Preserve affirmative statement boundaries without applying an assertion size cap to entire guide paragraphs. */
+function readArticleGameAssertions(value: string): { statements: string[]; complete: boolean } {
+  if (!hasArticleGameAssertion(value)) return { statements: [], complete: true };
+  if (value.length <= MAX_ARTICLE_ASSERTION_CHARS) return { statements: [value], complete: true };
+  const owned = gamingApplicabilityAssertionText(value);
+  const statements: string[] = [];
+  let start = 0;
+  const readUntil = (end: number) => {
+    if (hasArticleGameAssertion(owned.text.slice(start, end).trim())) statements.push(value.slice(start, end).trim());
+  };
+  for (const boundary of owned.text.matchAll(/(?<=[.!?;])\s+/gu)) {
+    readUntil(boundary.index);
+    start = boundary.index + boundary[0].length;
+  }
+  readUntil(owned.text.length);
+  return { statements, complete: owned.complete };
+}
+
+function readArticlePlatforms(value: string, proseOnly = false): { platforms: Set<string>; complete: boolean } {
+  const declaration = gamingProsePlatformDeclarationPattern();
+  const platforms = new Set<string>();
+  const prose = proseOnly ? value.replace(/\n/gu, ' ') : value;
+  if (!declaration.test(prose)) {
+    const field = proseOnly ? undefined : ARTICLE_PLATFORM_FIELD.exec(value)?.[1].trim();
+    if (field) platforms.add(field);
+    return { platforms, complete: true };
+  }
+  const owned = gamingApplicabilityAssertionText(prose);
+  const firstUnpairedQuote = owned.text.search(/["“‘`]|(?<![\p{L}\p{N}])'(?=\S)/u);
+  let complete = true;
+  declaration.lastIndex = 0;
+  for (const match of prose.matchAll(declaration)) {
+    const end = match.index + match[0].length;
+    // Ignore declarations already read in their own intact line. Only a
+    // declaration interrupted by a soft break needs the joined witness.
+    if (proseOnly && !value.slice(match.index, end).includes('\n')) continue;
+    complete &&= owned.complete;
+    // Preserve the original sentence boundary and skip masked quotation text.
+    if (owned.text.slice(match.index, end) !== match[0]) continue;
+    if (firstUnpairedQuote >= 0 && firstUnpairedQuote < match.index) complete = false;
+    else platforms.add(match[1]);
+  }
+  return { platforms, complete };
+}
 
 // One reviewed React transport form, interpreted as static DOM relationships,
 // never JavaScript. Other renderers/helper revisions remain unsupported.
@@ -173,6 +245,20 @@ function text(value: string): string {
 function closed(element: Element): boolean {
   return Boolean((element as LocatedElement).sourceCodeLocation?.endTag);
 }
+function hasArticleInlineHidingStyle($: CheerioAPI, element: Element): boolean {
+  const style = $(element).attr('style');
+  if (!style) return false;
+  const winning = new Map<string, { value: string; important: boolean }>();
+  for (const [, property, value, priority] of style.matchAll(ARTICLE_INLINE_VISIBILITY)) {
+    const key = property.toLowerCase();
+    if (priority || !winning.get(key)?.important) {
+      winning.set(key, { value: value.trim().toLowerCase(), important: Boolean(priority) });
+    }
+  }
+  const visibility = winning.get('visibility')?.value;
+  return winning.get('display')?.value === 'none' || winning.get('content-visibility')?.value === 'hidden'
+    || visibility === 'hidden' || visibility === 'collapse';
+}
 function cleanElementText($: CheerioAPI, element: Element): string {
   const copy = $(element).clone();
   copy.find('script,style,template,table,ul,ol,dl').remove();
@@ -180,6 +266,82 @@ function cleanElementText($: CheerioAPI, element: Element): string {
   copy.find('br').replaceWith('\n');
   return text(copy.text());
 }
+/** Retain source-owned text runs separated by actual HTML block boundaries. */
+function articleScopeTextRuns($: CheerioAPI, element: Element, excluded: string): Array<{ value: string; intact: boolean; platformProseOnly?: true }> {
+  const runs: Array<{ value: string; intact: boolean; platformProseOnly?: true }> = [];
+  let adjacentLines: Array<{ value: string; intact: boolean }> = [];
+  const closedBlock = closed(element);
+  let fragments: string[] = [];
+  let intact = closedBlock;
+  let authored = false;
+  const finish = (lineBreak = false) => {
+    const value = text(fragments.join(''));
+    if (authored) {
+      const run = { value, intact };
+      runs.push(run);
+      adjacentLines.push(run);
+    }
+    // A line break may continue a prose platform declaration, but separate
+    // lines still bound labelled fields. Never join across another HTML block.
+    if (!lineBreak || value && !authored) {
+      if (adjacentLines.length > 1) runs.push({ value: adjacentLines.map(run => run.value).join('\n'),
+        intact: adjacentLines.every(run => run.intact), platformProseOnly: true });
+      adjacentLines = [];
+    }
+    fragments = [];
+    intact = closedBlock;
+    authored = false;
+  };
+  for (const child of $(element).contents().toArray()) {
+    if (child.type === 'comment' || hasArticleInlineHidingStyle($, child)) continue;
+    const node = $(child);
+    if (node.is('br')) {
+      finish(true);
+      continue;
+    }
+    if (node.is(ARTICLE_SCOPE_BLOCKS)) {
+      finish();
+      continue;
+    }
+    // Project visibility only for this attribution scan. The complete source
+    // and its parser locations stay available for later extraction checks.
+    const inlineHidden = (_index: number, inline: Element) => hasArticleInlineHidingStyle($, inline);
+    const needsProjection = node.find('[style]').filter(inlineHidden).length > 0;
+    const visible = needsProjection ? node.clone() : node;
+    if (needsProjection) visible.find('[style]').filter(inlineHidden).remove();
+    if (visible.is('q')) {
+      fragments.push('"', visible.text(), '"');
+      continue;
+    }
+    const value = visible.text();
+    const authoredNode = child.type === 'text' || visible.is(ARTICLE_SCOPE_INLINE) && closed(child) && !visible.is(excluded)
+      && visible.find('*').toArray().every(inline => $(inline).is(ARTICLE_SCOPE_INLINE) && closed(inline) && !$(inline).is(excluded));
+    fragments.push(value);
+    intact &&= authoredNode;
+    // A scope statement carried only by a link is a reference, not a publisher assertion.
+    authored ||= authoredNode && Boolean(value.trim());
+  }
+  finish();
+  return runs;
+}
+
+/** A detached related guide must declare its own recognized game in both its heading and lead. */
+function hasSeparateArticleGuideScope($: CheerioAPI, aside: Element, excluded: string): boolean {
+  const element = $(aside);
+  const [heading, paragraph] = element.children().toArray();
+  if (!heading || !paragraph || !closed(aside) || !closed(heading) || !$(heading).is('h2,h3,h4,h5,h6')
+    || !$(paragraph).is('p') || $([heading, paragraph]).closest(excluded).length) return false;
+  const opening = element.contents().toArray();
+  if (opening.slice(0, opening.indexOf(heading)).some(node => node.type !== 'comment'
+    && !(node.type === 'text' && !$(node).text().trim()))) return false;
+  const title = text($(heading).text());
+  const game = title.length <= 160 && /\b(?:guide|walkthrough)$/iu.test(title) && detectGamingRegistryAlias(title);
+  if (!game) return false;
+  const lead = articleScopeTextRuns($, paragraph, excluded)[0];
+  const declaration = lead?.intact && /^In(?: the game)?\s+([^,.!?;]{1,160}),/iu.exec(lead.value);
+  return Boolean(declaration && resolveGamingRegistryGame(declaration[1].trim())?.id === game.id);
+}
+
 function listElementText($: CheerioAPI, element: Element): string {
   const copy = $(element).clone();
   copy.find('script,style,template,table,ul,ol,dl').remove();
@@ -271,7 +433,52 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
   preservePrimaryContentSidebarLayouts($, gamingDocumentFetchOptions(input.sourceUrl).primaryContentSelectors);
+  const extractionProfile = gamingDocumentExtractionProfile(input.sourceUrl);
+  const articleNodeDenied = (element: Element) => !eligible($, element)
+    || (extractionProfile?.removeSelectors ?? []).some(selector => $(element).closest(selector).length > 0);
+  const articleOwner = htmlContent && !input.transportTruncated ? readGamingArticleOwner($, articleNodeDenied) : undefined;
+  const originalArticleScope = articleOwner ? readGamingArticleScope($, articleNodeDenied, articleOwner) : undefined;
   if (deadlineExpired()) return result;
+  const articlePlatforms = new Map<string, { node: Element; platform: string }>();
+  const articleScopeAssertions = new Set<string>();
+  let articleScopeUnverified = false;
+  if (articleOwner) {
+    // An article-wide restriction still binds the opening when a sibling note
+    // is removed or its heading loses the original block boundary in prose.
+    const excluded = `blockquote,q,code,pre,[role="menu"],.d-none,.visually-hidden,.sr-only,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`;
+    const { article } = articleOwner;
+    const detachedGuides = new Set($(article).find('aside').toArray()
+      .filter(aside => hasSeparateArticleGuideScope($, aside, excluded)));
+    for (const node of [article, ...$(article).find('p,div,section,aside,h2,h3,h4,h5,h6,li').toArray()]) {
+      if (deadlineExpired()) return result;
+      const element = $(node);
+      if (element.closest(excluded).length || element.parents('[style]').addBack('[style]').toArray()
+        .some(ancestor => hasArticleInlineHidingStyle($, ancestor))) continue;
+      for (const { value, intact, platformProseOnly } of articleScopeTextRuns($, node, excluded)) {
+        const { statements, complete: gameScopeComplete } = platformProseOnly
+          ? { statements: [], complete: true } : readArticleGameAssertions(value);
+        const { platforms, complete: platformScopeComplete } = readArticlePlatforms(value, platformProseOnly);
+        const complete = gameScopeComplete && platformScopeComplete;
+        if (complete && !statements.length && !platforms.size) continue;
+        if (detachedGuides.size && $(node).parents('aside').addBack('aside').toArray().some(aside => detachedGuides.has(aside)))
+          continue;
+        if (!intact || !complete) {
+          articleScopeUnverified = true;
+          continue;
+        }
+        for (const statement of statements) {
+          if (statement.length > MAX_ARTICLE_ASSERTION_CHARS || articleScopeAssertions.size >= 128 && !articleScopeAssertions.has(statement))
+            articleScopeUnverified = true;
+          else articleScopeAssertions.add(statement);
+        }
+        for (const platform of platforms) {
+          if (articlePlatforms.has(platform.toLowerCase())) continue;
+          if (articlePlatforms.size >= 32) articleScopeUnverified = true;
+          else articlePlatforms.set(platform.toLowerCase(), { node, platform });
+        }
+      }
+    }
+  }
   const inspectVisibleResponse = (): string => {
     const visibleBody = $('body').clone();
     visibleBody.find('script,style,template,noscript').remove();
@@ -592,6 +799,13 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     for (const reason of integrityReasons) fail(reason);
   }
 
+  // Keep the scope assertion as metadata, outside gameplay claims and passage selection.
+  for (const { node, platform } of articlePlatforms.values()) {
+    if (exhausted()) break;
+    addUnit('paragraph', [{ label: 'Platform', value: platform }], node, 'prose',
+      { scope: `${ARTICLE_PLATFORM_SCOPE_PREFIX}${elementIndex.get(node) ?? 0}` });
+  }
+
   // DOM block boundaries survive text flattening through parser-owned metadata.
   // These paragraph units never establish gameplay facts or structural support.
   for (const [index, paragraph] of $('p,div,span').toArray().entries()) {
@@ -905,6 +1119,12 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   });
   result.proseBody = $.html();
   if (deadlineExpired()) return result;
+  if (stream !== 'restored' && articleOwner) {
+    if (originalArticleScope) result.originalArticleScope = originalArticleScope.metadata;
+    if (articleScopeAssertions.size || articlePlatforms.size || articleScopeUnverified) result.articleScopeHeading = articleOwner.heading;
+    if (articleScopeAssertions.size) result.articleScopeAssertions = [...articleScopeAssertions];
+    if (articleScopeUnverified) result.articleScopeUnverified = true;
+  }
   if (!result.units.length) fail('no_supported_structured_records');
   return result;
 }

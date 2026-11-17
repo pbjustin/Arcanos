@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
 import { GAMING_CLEAR_POLICY_VERSION } from '../src/shared/gaming/gamingClearPolicy.js';
-import { GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { GAMING_STORED_APPLICABILITY_VERSION } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 
 const search = jest.fn<(...args: any[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
 const findSources = jest.fn<(...args: any[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
@@ -23,7 +23,7 @@ function row(id: string, held = false): GamingKnowledgeProvenanceRecord {
     extractor: 'synthetic', extractorVersion: '1', normalizerSchemaVersion: '1', extractionMetrics: {}, relevance: 0.8,
     provenance: { sourceIdentityPolicyVersion: GAMING_CLEAR_POLICY_VERSION,
       ...(held ? { classification: 'reference_only', generationEligible: false } : {}),
-      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash: 'c'.repeat(64), game: input.game,
+      acquiredApplicability: { extractorVersion: GAMING_STORED_APPLICABILITY_VERSION, contentHash: 'c'.repeat(64), game: input.game,
         metadataConflict: false, metadataUnverified: false } } };
 }
 beforeEach(() => { search.mockReset(); logInfo.mockClear(); findSources.mockReset();

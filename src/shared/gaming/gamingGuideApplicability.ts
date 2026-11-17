@@ -1,4 +1,4 @@
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, gamingRequestTargetsExtraContent, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import type { GamingCurrentnessEvidenceShape } from './gamingCurrentnessAdapters.js';
 
@@ -70,7 +70,8 @@ export function evaluateGamingGuideApplicability(input: {
   if (guide.metadataConflict) return result('conflicting', 'CONTRADICTORY_SOURCE_METADATA');
   if (input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition, input)) return result('conflicting', 'EDITION_CONFLICT');
   if ((input.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition, input))
-    || (!input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, undefined, input))) return result('unverified', 'EDITION_UNVERIFIED');
+    || (!input.edition && (guide.edition || gamingRequestTargetsExtraContent(input))
+      && !gamingEditionEvidenceMatchesRequest(guide.edition, undefined, input))) return result('unverified', 'EDITION_UNVERIFIED');
   if (guide.metadataUnverified) return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
   for (const [values, wanted, field] of [[guide.platforms, input.platform, 'PLATFORM'], [guide.regions, input.region, 'REGION']] as const) {
     const matches = field === 'PLATFORM' ? gamingPlatformEvidenceMatchesRequest(values, wanted) : includes(values, 'all') || includes(values, wanted);

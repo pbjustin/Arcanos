@@ -130,6 +130,7 @@ export const LIVE_PREVIEW_CASE_MANIFEST: ReadonlyArray<Readonly<{
   provider: 'none' | 'generation_only' | 'generation_and_audit';
   stages: Readonly<Record<LivePreviewStage, LivePreviewStageStatus>>;
 }>>;
+export function extractLivePreviewNumericCitations(answer: string): number[];
 export function createLivePreviewEvidence(identity: LivePreviewIdentity, input: LivePreviewEvidenceInput): LivePreviewEvidence;
 export function verifyLivePreviewEvidence(evidence: unknown, expectedIdentity: LivePreviewIdentity): LivePreviewCaseVerification;
 export function verifyLivePreviewSuite(evidence: unknown, expectedIdentity: LivePreviewIdentity): {

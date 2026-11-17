@@ -53,6 +53,59 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selected.selectedCandidateIds).toEqual(['candidate-0']);
   });
 
+  it('requires same-passage support for an explicit operation setting', () => {
+    const row = 'Mechanic: Amber gate | Value: Activate amber gate at the entry panel.';
+    const prose = 'Activate amber gate at the entry panel on the south side of the gatehouse. With manual override enabled, turn the copper switch before activating amber gate. '
+      + 'On the entry panel, wait for the amber indicator to light before crossing the threshold through the gate into the courtyard.';
+    const data = longGuideKnowledge([row, prose]);
+    const fields = [{ label: 'Mechanic', value: 'Amber gate' }, { label: 'Value', value: 'Activate amber gate at the entry panel.' }];
+    const unit: GamingEvidenceUnit = { id: 'gate-mechanic-row', kind: 'table_row', text: row, fields,
+      context: { scope: 'mechanic' }, integrity: { status: 'complete', reasons: [] },
+      provenance: { sourceUrl: data.sources[0].url, strategy: 'html_table', representation: 'html_dom',
+        policyVersion: 'gaming-evidence-units/v1', locator: 'table[0]/tr[0]' } };
+    data.evidence![0].evidenceUnits = [unit];
+    const candidates = data.evidence!.map(evidence => ({ evidence, source: data.sources[0] }));
+    const limits = { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
+    const request = { ...input, prompt: 'How do I activate amber gate with manual override?' };
+    const tableOnly = { ...data, evidence: [data.evidence![0]] };
+    expect(assessGamingRequestCoverage(request, tableOnly).coverageSatisfied).toBe(false);
+    expect(assessGamingClearEvidence(request, tableOnly).blockingFindings.map(finding => finding.code))
+      .toContain('QUESTION_COVERAGE_INSUFFICIENT');
+    expect(assessGamingRequestCoverage(request, longGuideKnowledge([row, 'With manual override enabled, turn the copper switch.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request, longGuideKnowledge([row + ' This section lists the manual override setting.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['Activate amber gate at the entry panel. With manual override enabled, open the map.']))
+      .coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['With manual override enabled, turn the copper switch before activating amber gate.']))
+      .coverageSatisfied).toBe(true);
+    expect(assessGamingRequestCoverage(request,
+      longGuideKnowledge(['With manual override enabled, turn the copper switch before activating amber gate if it is ever unlocked.']))
+      .coverageSatisfied).toBe(false);
+    const throttleRequest = { ...input, game: 'Elite Dangerous', prompt: 'How do I use Supercruise Assist with manual throttle?' };
+    expect(assessGamingRequestCoverage(throttleRequest, knowledge([
+      'Select a destination in the Navigation panel and enable Supercruise Assist. With manual throttle enabled, open the map.'
+    ], throttleRequest.game)).coverageSatisfied).toBe(false);
+    expect(assessGamingRequestCoverage(request, { ...data, evidence: [data.evidence![1]] }).coverageSatisfied).toBe(true);
+    const qualifiedValue = 'With manual override enabled, activate amber gate at the entry panel.';
+    const qualifiedRow = row.replace(fields[1].value, qualifiedValue);
+    expect(assessGamingRequestCoverage(request, { ...tableOnly, evidence: [{
+      ...data.evidence![0], text: qualifiedRow,
+      evidenceUnits: [{ ...unit, text: qualifiedRow, fields: [fields[0], { ...fields[1], value: qualifiedValue }] }]
+    }] }).coverageSatisfied).toBe(true);
+    const selection = selectGamingCoverageEvidence(candidates, request, limits, assessGamingRequestCoverage);
+    expect(selection.map(candidate => candidate.evidence.recordId)).toEqual(['record-1']);
+    const splitRevision = [candidates[0], { ...candidates[1], evidence: { ...candidates[1].evidence, revisionId: 'other-revision' } }];
+    expect(selectGamingCoverageEvidence(splitRevision, request, limits, assessGamingRequestCoverage)
+      .map(candidate => candidate.evidence.recordId)).toEqual(['record-1']);
+    const unconditional = { ...request, prompt: 'How do I activate amber gate?' };
+    expect(assessGamingRequestCoverage(unconditional, tableOnly).coverageSatisfied).toBe(true);
+    expect(selectGamingCoverageEvidence(candidates, unconditional, limits, assessGamingRequestCoverage)
+      .map(candidate => candidate.evidence.recordId)).toEqual(['record-0']);
+  });
+
   it('fails closed when the pure v2 selector has no authoritative coverage assessor', () => {
     const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns.']);
     const candidates = [{ source: data.sources[0], evidence: data.evidence![0] }];
@@ -654,6 +707,53 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       expect(evaluated.accepted).toEqual([]);
     });
   });
+  it('binds a retained article-scoped record to its exact acquired chunk offsets', async () => {
+    const sourceUrl = 'https://heldout-guides.example/articles/the-cousins-bellic';
+    const lead = 'After Niko steps off the boat in Liberty City, Roman has arrived to collect you. '
+      + "Once you're in his car, you'll need to drive him back to his apartment.";
+    const request = { game: 'Grand Theft Auto IV', mode: 'guide' as const, prompt: 'What should I do next?',
+      progressPoint: 'Just got off the boat.', spoilerMode: 'light' as const };
+    mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
+      data: '<html><head><title>The Cousins Bellic</title></head><body><article>'
+        + '<header><div>GTA IV - Story Mission Guide</div><h1>The Cousins Bellic</h1></header>'
+        + '<div class="walkthrough"><h2>Introduction</h2>' + lead + '<br><h2>To The Apartment</h2>'
+        + 'Follow the yellow marker on the radar. This is your GPS indicator for the apartment.</div></article></body></html>' }));
+    const evaluated = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2',
+      candidates: [{ url: sourceUrl }] }, actor);
+    expect(evaluated.accepted).toHaveLength(1);
+    const [artifact] = evaluated.accepted;
+    expect(artifact.sourceAssessment.dimensionScores.alignment.reasonCodes).toContain('ACQUIRED_ARTICLE_SCOPE_IDENTITY');
+    expect(artifact.evidenceRecords).toHaveLength(1);
+    const [record] = artifact.evidenceRecords!;
+    const full = selectGamingHybridAcceptedEvidence(request, [artifact], actor);
+    expect(full.evidence?.map(chunk => chunk.recordId)).toEqual([record.recordId]);
+    expect(() => assertGamingHybridEvidenceMembership(full, [artifact], actor)).not.toThrow();
+
+    // Repartition the server-acquired rendering at its paragraph boundary. An
+    // individual retained record can be shorter than the complete rendering.
+    const startChar = 0;
+    const endChar = record.searchText.indexOf('\nTo The Apartment');
+    expect(endChar).toBeGreaterThan(0);
+    const text = record.searchText.slice(startChar, endChar);
+    const chunk = { ordinal: 0, totalChunks: 2, startChar, endChar };
+    const scoped = { ...record, searchText: text, normalized: { text, chunk } };
+    artifact.evidenceRecords = [scoped];
+    const selected = selectGamingHybridAcceptedEvidence(request, [artifact], actor);
+    expect(selected.evidence).toEqual([expect.objectContaining({ text: lead, startChar, endChar })]);
+    expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).not.toThrow();
+
+    for (const normalizedChunk of [undefined, { ...chunk, startChar: '0' }, { ...chunk, startChar: -1 },
+      { ...chunk, startChar: 1, endChar: endChar + 1 }, { ...chunk, endChar: endChar + 1 },
+      { ...chunk, startChar: record.searchText.length, endChar: record.searchText.length + text.length }]) {
+      artifact.evidenceRecords = [{ ...scoped, normalized: { text, chunk: normalizedChunk } }];
+      expect(selectGamingHybridAcceptedEvidence(request, [artifact], actor).evidence ?? []).toEqual([]);
+      expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).toThrow('Selected evidence does not belong');
+    }
+    artifact.evidenceRecords = [{ ...scoped, searchText: text + ' Unbound extra text.' }];
+    expect(selectGamingHybridAcceptedEvidence(request, [artifact], actor).evidence ?? []).toEqual([]);
+    expect(() => assertGamingHybridEvidenceMembership(selected, [artifact], actor)).toThrow('Selected evidence does not belong');
+  });
+
   function readableDocument() {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
       data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.

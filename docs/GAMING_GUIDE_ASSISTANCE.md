@@ -114,6 +114,9 @@ retain their ambiguity. Exact base-game wording and closed `no`, `without` or
 request conflicts. Bounded named negatives such as “do not use Shadow of the
 Erdtree” remain unresolved instead of selecting affirmative expansion scope;
 double negatives and mixed positive/negative requests also remain unresolved.
+A request for content outside the base game leaves the expansion choice open
+unless the player names one. Once named, the expansion still requires compatible
+acquired evidence.
 The closed generic question pattern “Is DLC required/needed/
 necessary to obtain …?” allows ordinary base-game evidence unless other positive
 expansion scope remains. Acquired evidence must prove the availability fact;
@@ -144,6 +147,20 @@ This requires the exact topic and requested game in affirmative acquired prose;
 URL hints, loose game mentions and quoted references cannot establish it. Known
 game aliases and explicit contradictory game, sequel, expansion or edition
 declarations continue to bind.
+
+For a reviewed gameplay topic, a visible game label in the selected article's
+own header can corroborate identity with the retained topic heading and an
+affirmative claim in the opening prose. The game registry records the entities
+and action-object relationships that can corroborate each topic. All of them
+must be supported by the same claim. Navigation, image descriptions, neighboring articles,
+scattered names, and comparisons cannot supply this proof. In Hybrid v2 the
+opening claim attests to its own passage. A complete later statement can also
+contribute when it independently names the requested game and passes the same
+applicability, coverage, and provenance checks. The immediate sibling route
+section can contribute if it belongs to the same acquired article region and
+continues the exact destination named in the opening instruction. The whole
+acquired article still goes through contradiction and applicability checks.
+These passage-level checks never grant storage permission or publisher authority.
 
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted
@@ -338,8 +355,9 @@ The procedure is documented only; this coding PR does not deploy or execute it.
 `gaming-player-retrieval/v1` separates exact question terms from supporting
 area/checkpoint/objective/class/constraint terms. Specific item/boss terms stay
 the relevance anchor; for an ambiguous question such as "What next?", player
-context supplies that anchor. Platform, generic difficulty, edition/version,
-and presentation preferences do not become topical acquisition terms. Candidate
+context supplies that anchor. Common progress phrases such as "just arrived"
+exclude the recency marker "just" from lexical matching. Platform, generic
+difficulty, edition/version, and presentation preferences do not become topical acquisition terms. Candidate
 acquisition is bounded to 16 lexical terms and 20 stored candidates.
 
 The existing 25% topical-coverage floor and 65% coverage/35% normalized SQL-rank
@@ -351,6 +369,8 @@ remain valid, and supplied-guide zero-evidence suppression still blocks an
 unsupported provider call.
 
 Known verified patch mismatches are excluded using existing version comparison.
+An explicit sentence such as "This walkthrough applies only to Xbox 360."
+is subject to the same platform checks as an acquired platform field.
 Unknown edition/version compatibility is not invented. Storage does not provide
 trustworthy general game progression chronology or edition metadata, so the
 policy does not equate chapter/chunk order with progression or apply speculative
@@ -1033,6 +1053,12 @@ Expiring evidence still triggers `EVIDENCE_REVALIDATION_REQUIRED`. Citation
 structure and presentation establish provenance and formatting, while the
 generated claims remain model-authored.
 
+Hybrid v2 requires grounded guide answers to cite the selected evidence.
+An exact selected-source Markdown link or URL retains its original text and
+receives the assigned source number alongside it when the answer has no
+numeric citation. References copied inside quoted excerpts cannot satisfy the
+requirement by themselves.
+
 When the selected source was partially extracted, delivery retains the exact
 standalone notice. Repeated copies in the leading notice block are collapsed,
 while distinct qualifications and quoted source text are preserved.
@@ -1179,7 +1205,10 @@ ingestion binds applicability only after independently acquired game and edition
 identity is verified; matching request, URL or page title metadata does not
 provide that proof. Older unapproved stored revisions without current
 server-written identity proof remain readable but cannot authorize generation
-until reassessed. These checks do not automatically write or migrate stored data.
+until reassessed. Applicability snapshots from an older scan remain readable by
+the owner. They cannot establish compatibility for generation until a current
+scan reassesses the whole source. These checks do not automatically write or
+migrate stored data.
 
 Live extraction caches also respect durable source history. If any revision is
 known for the exact source and applicable game identity, retrieval reacquires its
