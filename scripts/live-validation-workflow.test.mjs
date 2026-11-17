@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
-  symlinkSync, writeFileSync } from 'node:fs';
+  symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -367,6 +367,51 @@ test('trusted artifact binding recomputes opaque bytes and pins source, controll
     assert.equal(record.attestationSha256, createHash('sha256').update(readFileSync(fixture.manifestPath)).digest('hex'));
     assert.equal(statSync(recordPath).mode & 0o777, 0o600);
   } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('hosted source archive records the exact commit and omits only release ZIPs', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-source-'));
+  const git = args => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const step = named(offline, 'Record candidate source and build hashes');
+  const command = step.run.split('\n').find(line => line.startsWith('git archive '));
+  assert.ok(command, 'Expected hosted source archive command');
+  try {
+    git(['init', '--template=']);
+    mkdirSync(path.join(directory, 'release'));
+    writeFileSync(path.join(directory, 'release', 'installer.zip'), 'release binary');
+    writeFileSync(path.join(directory, 'release', 'README.md'), 'release notes');
+    writeFileSync(path.join(directory, 'source.ts'), 'const original = true;');
+    git(['add', '.']);
+    git(['-c', 'user.name=Workflow fixture', '-c', 'user.email=fixture@example.invalid',
+      'commit', '--no-gpg-sign', '-m', 'exact source archive fixture']);
+    const commit = git(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(directory, 'source.ts'), 'uncommitted change');
+    const result = spawnSync('bash', ['-c', command], { cwd: directory, encoding: 'utf8',
+      env: { ...baseEnvironment(), EXPECTED_SHA: commit, candidate_artifact: '.' } });
+    assert.equal(result.status, 0, result.stderr);
+    const archive = path.join(directory, 'source.tar');
+    assert.equal(execFileSync('git', ['get-tar-commit-id'], { input: readFileSync(archive), encoding: 'utf8' }).trim(), commit);
+    const archived = execFileSync('tar', ['-tf', archive], { encoding: 'utf8' }).trim().split(/\r?\n/);
+    assert.deepEqual(archived, ['release/', 'release/README.md', 'source.ts']);
+    assert.equal(execFileSync('tar', ['-xOf', archive, 'source.ts'], { encoding: 'utf8' }), 'const original = true;');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('trusted artifact binding rejects archives and manifests above their individual limits', () => {
+  for (const [name, size] of [
+    ['source.tar', 128 * 1024 * 1024 + 1],
+    ['build.tar', 128 * 1024 * 1024 + 1],
+    ['candidate-attestation.json', 16 * 1024 + 1],
+  ]) {
+    const fixture = candidateFixture();
+    try {
+      truncateSync(path.join(fixture.directory, name), size);
+      const result = runInline(binding, fixture.env);
+      assert.equal(result.status, 1, name);
+      assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_ARTIFACT_INVALID', name);
+      assert.equal(existsSync(path.join(fixture.root, 'artifact-attestation.json')), false, name);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  }
 });
 
 test('trusted artifact binding admits only the exact selected named profile', () => {

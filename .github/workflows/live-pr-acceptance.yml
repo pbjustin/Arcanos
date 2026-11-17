@@ -217,7 +217,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
           candidate_artifact="${RUNNER_TEMP}/live-validation-candidate"
           mkdir -m 700 "${candidate_artifact}"
-          git archive --format=tar "${EXPECTED_SHA}" > "${candidate_artifact}/source.tar"
+          git archive --format=tar "${EXPECTED_SHA}" -- . ':(exclude)release/*.zip' > "${candidate_artifact}/source.tar"
           tar -cf "${candidate_artifact}/build.tar" dist packages/protocol/dist packages/cli/dist \
             packages/arcanos-runtime/dist packages/arcanos-openai/dist workers/dist
           node --input-type=module <<'NODE'

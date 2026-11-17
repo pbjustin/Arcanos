@@ -182,8 +182,9 @@ export function readTrustedRunnerGitState(root) {
   const git = args => execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', ...args], {
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 5000, maxBuffer: 128 * 1024 }).trim();
   const head = git(['rev-parse', 'HEAD']);
+  const origin = git(['config', '--get', 'remote.origin.url']);
   requireController(realpathSync(git(['rev-parse', '--show-toplevel'])) === realpathSync(root)
-    && git(['config', '--get', 'remote.origin.url']) === 'https://github.com/pbjustin/Arcanos.git'
+    && ['https://github.com/pbjustin/Arcanos', 'https://github.com/pbjustin/Arcanos.git'].includes(origin)
     && SHA.test(head) && git(['status', '--porcelain', '--untracked-files=all']) === '', 'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID');
   return { root, head, clean: true, repository: 'pbjustin/Arcanos' };
 }
@@ -449,23 +450,33 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
     'LIVE_VALIDATION_PRIVATE_NETWORK_REQUIRED');
   const mounts = volumeInstances.map(volume => ({ id: volume.volumeId, serviceId: volume.serviceId,
     mountPath: volume.mountPath, purpose: 'quota_ledger' }));
-  const services = instances.map(instance => {
+  const observedInstances = instances.map(instance => {
+    const latest = instance.latestDeployment;
+    requireController(Array.isArray(instance.activeDeployments)
+      && (latest || instance.activeDeployments.length === 0), 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID');
+    const deployments = latest ? [latest, ...instance.activeDeployments] : instance.activeDeployments;
+    requireController(deployments.every(deployment => record(deployment)
+      && deployment.projectId === target.projectId && deployment.environmentId === target.environmentId
+      && deployment.serviceId === instance.serviceId && UUID.test(deployment.id ?? '')),
+    'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
+    // Railway can retain a stopped SUCCESS record in activeDeployments.
+    const activeDeployments = instance.activeDeployments.filter(deployment => deployment.deploymentStopped !== true);
+    requireController(activeDeployments.length <= 1, 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID');
+    if (phase === 'paid') {
+      if (latest) assertLiveValidationRuntimePolicy(latest);
+      instance.activeDeployments.forEach(assertLiveValidationRuntimePolicy);
+    }
+    return { ...instance, activeDeployments };
+  });
+  const services = observedInstances.map(instance => {
     const role = instance.serviceId === target.runtimeServiceId ? 'runtime' : 'unknown';
     const service = config.services[instance.serviceId]; const source = service?.source;
     const tcp = raw.runtimeTcp;
     requireController(record(source) && Array.isArray(tcp) && tcp.every(item => item.environmentId === target.environmentId
       && item.serviceId === instance.serviceId), 'LIVE_VALIDATION_INVENTORY_INVALID');
     const latest = instance.latestDeployment;
-    requireController(Array.isArray(instance.activeDeployments) && instance.activeDeployments.length <= 1
-      && (latest || instance.activeDeployments.length === 0), 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID');
-    if (latest) requireController(latest.projectId === target.projectId && latest.environmentId === target.environmentId
-      && latest.serviceId === instance.serviceId && UUID.test(latest.id ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
     const observedCommitSha = latest ? metadata(latest.meta)?.commitHash : null;
     requireController(!latest || SHA.test(observedCommitSha ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_SHA_MISMATCH');
-    if (phase === 'paid') {
-      if (latest) assertLiveValidationRuntimePolicy(latest);
-      instance.activeDeployments.forEach(assertLiveValidationRuntimePolicy);
-    }
     return { id: instance.serviceId, role,
       variableNames: [...new Set([...variables.filter(item => item.serviceId === instance.serviceId).map(item => item.name),
         ...Object.keys(service.variables ?? {})])],
@@ -478,7 +489,7 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   const inventory = assertLiveValidationInventory(target, { projectId: env.projectId, environmentId: env.id, environmentName: env.name,
     sharedVariableNames: [...new Set([...variables.filter(item => !item.serviceId).map(item => item.name), ...Object.keys(config.sharedVariables)])],
     privateNetworkEnabled: true, volumes: mounts, services }, { phase });
-  return { inventory, instances };
+  return { inventory, instances: observedInstances };
 }
 
 export function assertLiveValidationDeployment(deployment, target, role, commitSha, { successful = true } = {}) {

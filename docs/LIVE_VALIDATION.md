@@ -126,6 +126,10 @@ serve as deployment identity. The workflow performs these steps:
    candidate `treeSha` and `compiledSha256`, including the manifest's own hash.
 8. Recheck the PR head and only then admit the bounded paid run.
 
+The hosted source archive retains the exact commit except for release ZIPs,
+which are excluded from Railway deployments. The independent archive SHA256
+hashes and the full Git tree and compiled-content digests still apply.
+
 Runtime environment strings or an HTTP SHA echo alone are insufficient: observed
 Railway deployment identity and image/build proof must agree. The candidate must
 contain this harness. Older branches without it need a reviewed rebase or
