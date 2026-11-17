@@ -308,6 +308,12 @@ describe('v2 actor-bound recovery lifecycle', () => {
       .toEqual(['https://fixture.example/guide', 'https://fixture.example/second']);
   });
 
+  it('keeps punctuation inside an angle-bracket citation and trims surrounding bare-link punctuation', () => {
+    expect(gamingHybridCitationTargets(
+      'Read <https://fixture.example/route!>. Then see https://fixture.example/second!'
+    )).toEqual(['https://fixture.example/route!', 'https://fixture.example/second']);
+  });
+
   it('preserves balanced parentheses in Markdown and bare citation URLs', () => {
     expect(gamingHybridCitationTargets(
       'Read [1](https://fixture.example/Item_(Sword_(Rare)) "Guide"). '

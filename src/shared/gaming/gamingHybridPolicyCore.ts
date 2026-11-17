@@ -140,14 +140,17 @@ export function gamingHybridCitationLinks(answer: string): { url: string; start:
   const addBareLinks = (end: number) => {
     for (const match of answer.slice(offset, end).matchAll(/https?:\/\/[^\s<>]+/gu)) {
       const start = offset + match.index;
+      const bareEnd = start + match[0].length;
+      if (answer[start - 1] === '<' && answer[bareEnd] === '>') {
+        links.push({ url: match[0], start: start - 1, end: bareEnd + 1 });
+        continue;
+      }
       const value = match[0].replace(/[,.;!?]+$/gu, '');
       const excessClosers = (value.match(/\)/gu)?.length ?? 0) - (value.match(/\(/gu)?.length ?? 0);
       const trailingClosers = value.match(/\)+$/u)?.[0].length ?? 0;
       const url = value.slice(0, value.length - Math.min(trailingClosers, Math.max(0, excessClosers)))
         .replace(/[,.;!?]+$/gu, '');
-      const urlEnd = start + url.length;
-      const autolink = answer[start - 1] === '<' && answer[urlEnd] === '>';
-      links.push({ url, start: autolink ? start - 1 : start, end: urlEnd + Number(autolink) });
+      links.push({ url, start, end: start + url.length });
     }
   };
   for (const match of answer.matchAll(link)) {
