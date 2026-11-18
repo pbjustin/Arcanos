@@ -953,7 +953,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingPreferenceData.ts', '4372c4d9278ea6533a4b53bc60974b465bdeb0313203fd169f3f7c532bfc7cd1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGameRegistryData.ts', '337a3bad065684033f58a44132ffb99aa6f52a28d9c112dac52d8218d10d91c0'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGameRegistry.ts', '77a6ec596d28699ffd373905919e5924d4258fc4c74b3dbf9587216b08b62e2a'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', '4331b767de58f15ab5a7ed3971c988532fefe14d3c52407b04fa69b5d6e59af5'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'cd03128a46d0dc75dbd4c9f13ccfc8afe7469dcb7386bb7ff708dcaa7653a97a'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGenerationBudgetCore.ts', '6e31fc183f8450d645933aaabef946851aac2d5a807d564d92bb11a27edcd6e6'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingExecutionBudgetCore.ts', '8409207a0ff4ab57efc15e6837cd924b0441d5e63595c101d394acb334955e0d'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts', '84711a1814ecfc3f598fc6643104126f18327ccd434354b43d61b09c5a42d2a4'], // gitleaks:allow -- public source semantic SHA-256

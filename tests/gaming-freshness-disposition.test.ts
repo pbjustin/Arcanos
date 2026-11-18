@@ -128,6 +128,13 @@ describe('semantic Gaming freshness disposition', () => {
     expect(evaluated).toMatchObject({ classification: 'patch_sensitive', usable: false, status: 'unverified',
       reasons: ['CURRENT_OFFICIAL_INDEX_REQUIRED'] });
   });
+  it.each(['Was Moonveil nerfed?', 'Were greatswords buffed?', 'Was poise rebalanced?', 'Has Moonveil been nerfed?'])
+    ('requires patch evidence for a balance-change question: %s', prompt => {
+      const input = { prompt, mode: 'guide' };
+      expect(classifyGamingQuestionFreshness(input)).toBe('patch_sensitive');
+      expect(resolveGamingFreshnessDisposition(input)).toBe('REQUIRED');
+    });
+
   it('does not treat a request for today\'s changes as stable evidence', () => {
     expect(classifyGamingQuestionFreshness({ prompt: 'What changed today?', mode: 'guide' })).toBe('patch_sensitive');
   });

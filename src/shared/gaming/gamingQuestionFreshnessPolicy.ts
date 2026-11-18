@@ -53,6 +53,7 @@ export function classifyGamingQuestionFreshness(input: GamingFreshnessRequest): 
 function asksAboutBalanceChanges(prompt: string): boolean {
   return /\b(?:last|recent|new)\s+(?:patch|hotfix|balance\s+update)\b/iu.test(prompt)
     || /\bdid\s+(?:they|the\s+devs?)\s+(?:nerf|buff|rebalance)\b/iu.test(prompt)
+    || /(?:^|[?!.;,\n])\s*(?:(?:and|or|but)\s+)?(?:was|were)\s+(?:(?!\b(?:when|while|if|because|before|after)\b)[^?!.;,\n]){1,74}?\s+(?:nerfed|buffed|rebalanced)\b/iu.test(prompt)
     || /\b(?:what\s+(?:got|was|has\s+been)|(?:has|have)\b[^?!.\n]{1,74}\bbeen)\s+(?:nerfed|buffed|rebalanced)\b/iu.test(prompt);
 }
 

@@ -224,6 +224,19 @@ describe('authenticated Gaming conversation', () => {
     expect(run.retrieve).not.toHaveBeenCalled();
   });
 
+  it.each([
+    'Explain heavy rolling with reference to equipment load.',
+    'Do not search the web. Explain heavy rolling.'
+  ])('answers from model knowledge and preserves player context and explanatory prose: %s', async question => {
+    const run = harness();
+    const answer = 'According to what you described, you may be heavy rolling. Roll speed changes according to equipped weight.';
+    completeWith(answer);
+    const final = await run.query({ question });
+    expect(final.result.answer).toMatchObject({ response: answer, sources: [], grounding: 'model_knowledge' });
+    expect(trinity.mock.calls[0][0].input.prompt).toContain(question);
+    expect(run.retrieve).not.toHaveBeenCalled();
+  });
+
   it('replays identical queries without repeating generation', async () => {
     const run = harness();
     completeWith('Use the smithing table for your initial weapon upgrades.');
@@ -252,7 +265,10 @@ describe('authenticated Gaming conversation', () => {
 
   it.each([
     'Upgrade it. [Source 1]', 'Upgrade it. [Smithing wiki](https://fabricated.invalid/wiki)',
-    'Upgrade it. https://fabricated.invalid/wiki', 'I verified this on the official wiki. Upgrade it.'
+    'Upgrade it. https://fabricated.invalid/wiki', 'I verified this on the official wiki. Upgrade it.',
+    'Upgrade it. [Equipment-load wiki](//fabricated.invalid/wiki)', 'Upgrade it. [Equipment-load wiki](/wiki)',
+    'According to Fextralife, reduce your equipped weight to avoid heavy rolling.',
+    'You may be heavy rolling; according to fextralife, reducing equipped weight helps.'
   ])('withholds counterfeit source attribution: %s', async unsafeAnswer => {
     const run = harness();
     completeWith(unsafeAnswer);
@@ -292,8 +308,16 @@ describe('authenticated Gaming conversation', () => {
 describe('explicit Gaming research with semantic assistance', () => {
   it.each([
     { question: 'Find and cite a source for avoiding heavy rolling in Elden Ring.' },
+    { question: 'Explain heavy rolling with references.' },
+    { question: 'Search the web for an explanation of heavy rolling.' },
+    { question: 'Search the internet for an explanation of heavy rolling.' },
+    { question: 'Can you search the web for an explanation of heavy rolling?' },
     { question: 'What changed about heavy rolling in the latest Elden Ring patch?' },
     { question: 'Did they nerf heavy rolling in Elden Ring?' },
+    { question: 'Was Moonveil nerfed?' },
+    { question: 'Were greatswords buffed?' },
+    { question: 'Was poise rebalanced?' },
+    { question: 'Has Moonveil been nerfed?' },
     { game: 'Elite Dangerous', question: 'Are servers back up?' },
     { question: 'How does rolling work?', requestedVersion: '1.12' },
     { question: 'How does rolling work?', semanticAssistance: { version: semanticVersion, evidenceNeed: 'required' } },

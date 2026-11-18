@@ -116,7 +116,8 @@ function gamingRequestNeedsSources(question: string): boolean {
   return gamingQuestionRequestsCitations(question)
     || /\b(?:according\s+to|based\s+on|using|check|read|consult|summari[sz]e|look\s+up)\s+(?:(?:this|that|the|a|an|official|online)\s+){0,4}(?:guide|walkthrough|wiki|article|source|documentation|patch\s+notes)\b/iu.test(question)
     || /\b(?:find|locate|link(?:\s+(?:me\s+)?to)?|point\s+me\s+to|search\s+for|recommend|is\s+there)\s+(?:(?:me|us|a|an|the|actual|reputable|written|official|online|good|video|gaming)\s+){0,6}(?:guides?|walkthroughs?|wiki|sources?|articles?|patch\s+notes)\b(?!\s+(?:of|npc|character)\b)/iu.test(question)
-    || /\b(?:can\s+you|please)\s+(?:search\s+(?:the\s+)?(?:web|internet)|look\s+(?:it|that|this)\s+up|verify\s+(?:this|that|it))\b/iu.test(question);
+    || /(?:^|[.!?;,\n]|\b(?:and|then)\s+(?=please\b|(?:can|could|would|will)\s+you\b))\s*(?:(?:and|then|also)\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?search\s+(?:the\s+)?(?:web|internet)\b(?!\s+of\b)/iu.test(question)
+    || /\b(?:can\s+you|please)\s+(?:look\s+(?:it|that|this)\s+up|verify\s+(?:this|that|it))\b/iu.test(question);
 }
 
 function queryBudgetKey(actor: string, input: GamingHybridQuery, conversation?: GamingPipelineInput['conversation'],

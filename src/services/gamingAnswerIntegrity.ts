@@ -13,6 +13,8 @@ const MARKDOWN_QUOTED_BLOCK = /^ {0,3}((`|~)\2{2,})[^\r\n]*\r?\n[\s\S]*?(?:^ {0,
 const QUOTED_EXCERPT = /`+[^`\r\n]+`+|"[^"]*"|“[^”]*(?:”|(?![\s\S]))|(?:^|[\s(])'(?:[^'\r\n]|(?<=\p{L})'(?=\p{L}))*'|‘[^’]*’/gmu;
 const HTML_MARKUP = /<!--[\s\S]*?(?:-->|(?![\s\S]))|<\/?[a-z][a-z\d-]*(?:\s[^<>]*|\/?)>/giu;
 const EXPLICIT_CITATION_REQUEST = /\b(?:cite\s+(?:(?:your|a|an|the|these|actual|official|guide)\s+){0,3}(?:sources?|references?|guides?)|(?:include|provide|give\s+me|show\s+me|with)\s+(?:(?:a|an|the|your|some|verified|actual|official|source)\s+){0,3}(?:citations?|sources?|references?)\b(?!\s+of\b))|(?:^|[.!?,;\n])\s*(?:sources?|citations?)\s*\?/iu;
+const CLAUSE_ANSWER_ATTRIBUTION = /(?:^|[.!?,;:]\s+)[ \t>*_#-]*according\s+to\s+["“'‘_*`]*([\p{L}\p{N}][^,;:!?\r\n.]{0,119})/gimu;
+const PLAYER_ANSWER_ATTRIBUTION = /^(?:you\b|your\b|what\s+you\b|(?:the|those)\s+(?:details?|context|information)\s+you\b)/iu;
 const ANSWER_PATCH_REFERENCE = /\b(?:for|on|in)\s+(?:current\s+)?patch\s+(\d+(?:\.\d+){1,2})\b/giu;
 const GUIDE_PATCH_UNCERTAINTY = /(?:^|[.!?](?:\s*\[(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\])?\s+|\r?\n)\s*(?:the|this)\s+guide\s+does\s+not\s+(?:establish|confirm)\s+(?:whether\s+(?:these\s+steps\s+work|(?:the|this)\s+(?:route|strategy|build)\s+works)\s+on|compatibility\s+(?:for|with|on))\s+patch\s+\d+(?:\.\d+){1,2}\.(?=\s|$)/giu;
 
@@ -71,6 +73,7 @@ export function isGamingSourcePartiallyExtracted(source: GamingSource): boolean 
 
 export function gamingQuestionRequestsCitations(question: string): boolean {
   const scope = question.replace(/"[^"\r\n]{0,160}"|“[^”\r\n]{0,160}”/gu, ' ')
+    .replace(/\bwith\s+reference\s+to\b/giu, ' ')
     .replace(/\b(?:do\s+not|don['’]t|no\s+need\s+to)\s+(?:cite|include|provide)\s+(?:(?:any|your|the|a|source)\s+){0,3}(?:sources?|citations?|references?|guides?)\b/giu, ' ');
   return EXPLICIT_CITATION_REQUEST.test(scope);
 }
@@ -80,7 +83,10 @@ export function checkGamingConversationalAnswerIntegrity(answer: string): string
   if (!answer.trim() || answer.length > MAX_GAMING_ANSWER_CHARS) return 'INVALID_ANSWER_LENGTH';
   if ([...answer.matchAll(NUMERIC_CITATION)].length || MARKDOWN_REFERENCE_DEFINITION.test(answer)
     || /\b(?:https?:\/\/|www\.)|<\s*a\b[^>]*\bhref\s*=/iu.test(answer)) return 'CITATION_PROVENANCE_MISSING';
-  if (gamingAnswerClaimsVerifiedCurrentness(answer)
+  // Clause-leading "according to" introduces an attribution even without a link.
+  const sourceAttribution = [...answer.matchAll(CLAUSE_ANSWER_ATTRIBUTION)].some(([, target]) =>
+    !PLAYER_ANSWER_ATTRIBUTION.test(target));
+  if (sourceAttribution || gamingAnswerClaimsVerifiedCurrentness(answer)
     || /^ {0,3}(?:[*#]+\s*)?sources?\s*:/imu.test(answer)
     || /\b(?:according\s+to\s+(?:the\s+)?(?:official|wiki|guide|source|patch\s+notes)|(?:I|we)\s+(?:personally\s+)?(?:verified|confirmed|checked|looked\s+up|consulted|tested|searched))\b/iu.test(answer)) {
     return 'UNSUPPORTED_VERIFICATION_CLAIM';
