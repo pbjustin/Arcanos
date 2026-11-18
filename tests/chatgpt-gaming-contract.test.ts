@@ -123,6 +123,76 @@ describe('explicit Gaming hybrid v2 contract compatibility', () => {
     expect(isGamingMcpInput('arcanos_gaming_submit_candidates', { ...withoutRevision, contractVersion: 'gaming-hybrid-v1' })).toBe(true);
   });
 
+  it('accepts bounded semantic assistance in v2 and preserves the original question', () => {
+    const query = { ...v2Query, question: 'How do I make this thing hit harder?',
+      semanticAssistance: { version: 'gaming-semantic-v1', interpretation: 'The player means the sword discussed earlier.' } };
+    for (const input of [query, { ...query, semanticAssistance: { version: 'gaming-semantic-v1' } },
+      ...['required', 'specific_source', 'current_patch', 'live_status'].map(evidenceNeed =>
+        ({ ...query, semanticAssistance: { ...query.semanticAssistance, evidenceNeed } }))]) {
+      expect(isGamingMcpInput('arcanos_gaming_hybrid_query', input)).toBe(true);
+      expect(gamingHybridQuerySchema.parse(input)).toMatchObject({
+        question: query.question, semanticAssistance: input.semanticAssistance
+      });
+    }
+    expect(isGamingMcpInput('arcanos_gaming_hybrid_query', { ...query, contractVersion: 'gaming-hybrid-v1' })).toBe(false);
+    expect(gamingHybridQuerySchema.safeParse({ ...query, contractVersion: 'gaming-hybrid-v1' }).success).toBe(false);
+    for (const semanticAssistance of [
+      {}, { version: 'gaming-semantic-v2' },
+      ...['', '   ', 'context\naltered', 'context\u202ealtered', 'x'.repeat(401)].map(interpretation =>
+        ({ ...query.semanticAssistance, interpretation })),
+      { ...query.semanticAssistance, evidenceNeed: 'skip' },
+      ...['authority', 'verifiedFacts', 'selectedEvidenceIds', 'completedObjectives', 'userScope', 'confirmStore', 'sources'].map(field =>
+        ({ ...query.semanticAssistance, [field]: 'forged' }))
+    ]) {
+      const invalid = { ...query, semanticAssistance };
+      expect(isGamingMcpInput('arcanos_gaming_hybrid_query', invalid)).toBe(false);
+      expect(gamingHybridQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+    expect(isGamingMcpInput('arcanos_gaming_query', {
+      mode: 'guide', game: query.game, prompt: query.question, semanticAssistance: query.semanticAssistance
+    })).toBe(false);
+  });
+
+  it('accepts one literal source reference alongside stricter freshness requirements', () => {
+    const query = { ...v2Query, question: 'How does that guide compare to the current patch?' };
+    for (const evidenceNeed of ['specific_source', 'current_patch', 'live_status']) {
+      const semanticAssistance = { version: 'gaming-semantic-v1', evidenceNeed,
+        requiredSourceUrl: 'https://guides.example.org/the-guide' };
+      expect(isGamingMcpInput('arcanos_gaming_hybrid_query', { ...query, semanticAssistance })).toBe(true);
+      expect(gamingHybridQuerySchema.parse({ ...query, semanticAssistance })).toMatchObject({
+        question: query.question, semanticAssistance
+      });
+    }
+    for (const requiredSourceUrl of [
+      'guides.example.org/the-guide', 'ftp://guides.example.org/the-guide', 'https://',
+      'https:///guides.example.org', 'https://guides.example.org/with space',
+      'https://guides.example.org/a\n', 'https://guides.example.org/\u202e',
+      'https://guides.example.org/a\\b', 'https://guides.example.org/' + 'a'.repeat(2_048),
+      ['https://guides.example.org/the-guide']
+    ]) {
+      const input = { ...query, semanticAssistance: { version: 'gaming-semantic-v1', evidenceNeed: 'specific_source',
+        requiredSourceUrl } };
+      expect(isGamingMcpInput('arcanos_gaming_hybrid_query', input)).toBe(false);
+      expect(gamingHybridQuerySchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it('represents a v2 model-knowledge answer without a citation-bearing output', () => {
+    const answer = { response: 'Start by checking the upgrade menu.', sources: [], grounding: 'model_knowledge',
+      provenance: 'arcanos-trinity', requestId: 'fixture-v2-result' };
+    const result = { contractVersion: 'gaming-hybrid-v2', requestId: 'fixture-v2-result', state: 'answer_ready',
+      nextAction: 'answer', reason: 'CONVERSATIONAL_ANSWER', sourceKnown: false, evidenceSelected: false,
+      freshnessStatus: 'not_applicable', revision: 0, selectedCandidateIds: [], selectedEvidenceIds: [],
+      coverageSatisfied: false, missingCoverage: [], gapAssessmentStatus: 'not_assessed', requirementSupport: [], answer };
+    const output = { statusCode: 200, result };
+    expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', output)).toBe(true);
+    expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', { ...output,
+      result: { ...result, answer: { ...answer, sources: [{ url: 'https://guides.example.org/unverified' }] } } })).toBe(false);
+    expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', { ...output,
+      result: { contractVersion: 'gaming-hybrid-v1', requestId: result.requestId, state: result.state, nextAction: result.nextAction,
+        reason: result.reason, sourceKnown: false, evidenceSelected: false, freshnessStatus: result.freshnessStatus, answer } })).toBe(false);
+  });
+
   it('rejects frontend authority, selected IDs, storage consent and budget fabrication', () => {
     for (const key of ['selectedCandidateIds', 'selectedEvidenceIds', 'authority', 'coverageSatisfied', 'freshnessStatus',
       'confirmStore', 'storagePolicy', 'replacementAllowed', 'remainingTotalAcquisitionMs', 'recoveryRemaining', 'actorKey']) {

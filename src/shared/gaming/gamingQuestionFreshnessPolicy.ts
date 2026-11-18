@@ -1,10 +1,15 @@
 export type GamingQuestionFreshness = 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status';
 export type GamingFreshnessDisposition = 'NOT_REQUIRED' | 'ADVISORY' | 'REQUIRED';
+export type GamingFreshnessRequirement = 'current_patch' | 'live_status';
+type GamingFreshnessRequest = { prompt: string; mode?: string; requestedVersion?: string;
+  freshnessRequirement?: GamingFreshnessRequirement };
 
 /** Question policy is conservative even when an explicit client mode says "guide". */
-export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingQuestionFreshness {
+export function classifyGamingQuestionFreshness(input: GamingFreshnessRequest): GamingQuestionFreshness {
   const prompt = input.prompt.slice(0, 8_000);
-  if (/\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
+  if (input.freshnessRequirement === 'live_status'
+    || /\b(?:are\s+)?servers?\s+(?:back\s+up|up\s+yet|up\s+right\s+now)\b/iu.test(prompt)
+    || /\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
     || /\bmaintenance\b[^?!.\n]{0,40}\b(?:end(?:s|ed)?|start(?:s|ed)?|begin(?:s)?|finish(?:es|ed)?|scheduled)\b[^?!.\n]{0,30}\b(?:now|today|currently|tonight|tomorrow)\b/iu.test(prompt)
     || /\b(?:is|are)\b.{0,100}\b(?:event|maintenance|servers?)\b.{0,60}\b(?:active|running|available|online|offline|down|live|over|ongoing|today|now)\b/iu.test(prompt)
     || /\b(?:event|maintenance|servers?)\b.{0,40}\b(?:is|are|still)\s+(?:still\s+)?(?:active|running|available|online|offline|down|live|over|ongoing)\b/iu.test(prompt)
@@ -12,6 +17,7 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
     || /\b(?:has|have|did)\b.{0,60}\b(?:event|maintenance)\b.{0,30}\b(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
     || /\b(?:what|which)\b.{0,60}\bevent\b.{0,30}\b(?:current|active|running|live)\b/iu.test(prompt)) return 'live_status';
   if (/\b(?:season|seasonal|battle\s+pass|current\s+league)\b/iu.test(prompt)) return 'seasonal';
+  if (input.freshnessRequirement === 'current_patch' || asksAboutBalanceChanges(prompt)) return 'patch_sensitive';
   // A build label alone does not turn a basic mechanic or initial attribute
   // decision into a claim about current balance. This only narrows the mode
   // fallback; explicit optimization, version and live-state signals still win.
@@ -44,8 +50,14 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
   return 'stable';
 }
 
+function asksAboutBalanceChanges(prompt: string): boolean {
+  return /\b(?:last|recent|new)\s+(?:patch|hotfix|balance\s+update)\b/iu.test(prompt)
+    || /\bdid\s+(?:they|the\s+devs?)\s+(?:nerf|buff|rebalance)\b/iu.test(prompt)
+    || /\b(?:what\s+(?:got|was|has\s+been)|(?:has|have)\b[^?!.\n]{1,74}\bbeen)\s+(?:nerfed|buffed|rebalanced)\b/iu.test(prompt);
+}
+
 /** Current-state facts need proof; recommendation usefulness and freshness are separate. */
-export function resolveGamingFreshnessDisposition(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingFreshnessDisposition {
+export function resolveGamingFreshnessDisposition(input: GamingFreshnessRequest): GamingFreshnessDisposition {
   const prompt = input.prompt.slice(0, 8_000).replace(/\bcurrent\s*\/\s*latest\b/giu, 'latest')
     .replace(/\bcurrent\s+(area|checkpoint|location|objective|progress|quest)\b/giu, '$1')
     .replace(/\bmy\s+current\s+(build|loadout|class|weapon|gear)\b/giu, 'my existing $1');
@@ -68,8 +80,9 @@ export function resolveGamingFreshnessDisposition(input: { prompt: string; mode?
       || /\b(?:patch|hotfix|update|release|version|season|league|event)\b/iu.test(object)
       && !/\b(?:build|loadout|strategy|guide|weapons?|class|meta|recommend(?:ation|ations)?|tactics?)\b/iu.test(object);
   });
-  if (input.requestedVersion
+  if (input.requestedVersion || input.freshnessRequirement
     || classification === 'live_status'
+    || asksAboutBalanceChanges(prompt)
     || currentRelease
     || explicitCurrentRecommendation
     || /\bwhat\s+(?:changed|changes)\b[^?!.\n]{0,60}\b(?:today|now|currently)\b/iu.test(prompt)

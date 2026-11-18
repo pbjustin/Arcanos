@@ -11,7 +11,7 @@ import { redactString } from '@shared/redaction.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMING_HYBRID_V2_LIMITS, gamingHybridLimitsForVersion, GAMING_HYBRID_LIMITS as LIMITS,
   gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema, gamingHybridRequestedContractVersion,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
-import { resolveGamingPlayerContext, resolveGamingQuestionScope, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
+import { normalizeGamingVersionContext, resolveGamingPlayerContext, resolveGamingQuestionScope, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
 import { buildGamingRetrievalTerms, resolveGamingUserDecisionGap } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
@@ -34,6 +34,8 @@ import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
+import { extractExplicitGamingVersions } from './gamingVersion.js';
+import { checkGamingConversationalAnswerIntegrity, gamingQuestionRequestsCitations } from './gamingAnswerIntegrity.js';
 import { getGamingWebContextMaxChars, getGamingConfiguredStageTimeoutMs, getGamingExecutionBudget } from './gamingConfig.js';
 import { buildGamingDiscoveryQueries, discoverGamingSources, sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, selectGamingHybridEvidence,
@@ -105,13 +107,28 @@ function candidateSubmissionUrl(value: string): string {
 const normalizedBudgetValue = (value: unknown): unknown => typeof value === 'string'
   ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   : Array.isArray(value) ? value.map(normalizedBudgetValue) : value;
-function queryBudgetKey(actor: string, input: GamingHybridQuery): string {
+function gamingRequestRefersToSpecificSource(question: string): boolean {
+  return /\b(?:according\s+to|based\s+on)\s+(?:the|that|this)\s+(?:[\p{L}\d'-]+\s+){0,4}(?:guide|walkthrough|wiki|article|source|documentation)\b/iu.test(question)
+    || /\b(?:use|check|read|consult|summari[sz]e|review)\s+(?:that|this)\s+(?:guide|walkthrough|wiki|article|source|documentation)\b/iu.test(question);
+}
+
+function gamingRequestNeedsSources(question: string): boolean {
+  return gamingQuestionRequestsCitations(question)
+    || /\b(?:according\s+to|based\s+on|using|check|read|consult|summari[sz]e|look\s+up)\s+(?:(?:this|that|the|a|an|official|online)\s+){0,4}(?:guide|walkthrough|wiki|article|source|documentation|patch\s+notes)\b/iu.test(question)
+    || /\b(?:find|locate|link(?:\s+(?:me\s+)?to)?|point\s+me\s+to|search\s+for|recommend|is\s+there)\s+(?:(?:me|us|a|an|the|actual|reputable|written|official|online|good|video|gaming)\s+){0,6}(?:guides?|walkthroughs?|wiki|sources?|articles?|patch\s+notes)\b(?!\s+(?:of|npc|character)\b)/iu.test(question)
+    || /\b(?:can\s+you|please)\s+(?:search\s+(?:the\s+)?(?:web|internet)|look\s+(?:it|that|this)\s+up|verify\s+(?:this|that|it))\b/iu.test(question);
+}
+
+function queryBudgetKey(actor: string, input: GamingHybridQuery, conversation?: GamingPipelineInput['conversation'],
+  contextSource?: string): string {
   const edition = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? resolveGamingRequestEdition(input) : undefined;
   // Equivalent v2 request interpretations share acquisition limits. Keep the
   // actual query input untouched so operation idempotency remains payload-bound.
   const budgetInput = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? { ...input,
     ...(edition ? { edition } : {}), ...(input.platform ? { platform: normalizeGamingPlatformIdentity(input.platform) } : {}) } : input;
-  return hash([actor, Object.entries(budgetInput).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
+  // Frontend wording must not renew a research acquisition allowance. The
+  // interpretation only affects conversational answer reuse.
+  return hash([actor, ...(conversation ? [conversation] : []), ...(contextSource ? [contextSource] : []), Object.entries(budgetInput).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version', 'semanticAssistance',
     'answerDepth', 'spoilerTolerance', 'mode'].includes(key))
     .sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [key, normalizedBudgetValue(value)])]);
 }
@@ -236,7 +253,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   }
   async function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): Promise<GamingHybridResult> {
     if (workflow.authorityInvalid) return failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
-    if (result.body.answer || result.body.evidenceSelected) {
+    if (!workflow.pipeline.conversation && (result.body.answer || result.body.evidenceSelected)) {
       try { await validateAuthority(context, workflow, workflow.answerKnowledge ?? workflow.knowledge); }
       catch {
         workflow.authorityInvalid = true; workflow.answer = undefined; workflow.closed = true; workflow.pendingDiscovery = undefined;
@@ -550,7 +567,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const metadata = candidate ?? source.freshnessMetadata as unknown as GamingFreshnessEvidence | undefined;
       return { ...assessGamingSourcePolicy(source.url, input.game), ...(metadata ?? {}), id: source.sourceId,
         url: source.url, game: metadata?.game ?? input.game, fetchedAt: metadata?.fetchedAt ?? source.fetchedAt,
-        ...(!metadata && classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion }) === 'stable'
+        ...(!metadata && classifyGamingQuestionFreshness(workflow.pipeline) === 'stable'
           ? { verifiedAt: source.fetchedAt } : {}),
         metadataConfidence: metadata?.metadataConfidence ?? 'unknown' };
     });
@@ -578,7 +595,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     evidence.splice(0, evidence.length, ...combineGamingCurrentnessEvidence(evidence, new Date(deps.now())));
     const freshness = evaluateGamingFreshness({ question: input.question, game: input.game, mode: input.mode,
       requestedVersion: input.requestedVersion, edition: input.edition, platform: input.platform, region: input.region,
-      evidence, now: new Date(deps.now()) });
+      freshnessRequirement: workflow.pipeline.freshnessRequirement, evidence, now: new Date(deps.now()) });
     const disposition = resolveGamingFreshnessDisposition(workflow.pipeline);
     const advisory = disposition === 'ADVISORY' && !freshness.usable
       ? selectGamingAdvisoryGameplayEvidence({ game: input.game, freshness, evidence, now: new Date(deps.now()) }) : undefined;
@@ -842,6 +859,21 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         url: source.url, title: source.title, sourceId: source.sourceId, patchVersion: source.patchVersion, fetchedAt: source.fetchedAt })),
       provenance: 'arcanos-trinity', requestId: body.requestId } } };
   }
+  async function answerConversation(context: GamingHybridCallContext, workflow: Workflow): Promise<GamingHybridResult> {
+    const generated = await deps.generate(workflow.pipeline);
+    const { response, sources, fallbackReason } = generated.data;
+    const body = base(context, workflow);
+    if (fallbackReason || sources.length || checkGamingConversationalAnswerIntegrity(response)) {
+      const reason = fallbackReason
+        ? resolveGamingGenerationFailureReason({ fallbackReason, evidenceSelected: false }) : 'INVALID_GENERATED_ANSWER';
+      return { status: 503, body: { ...body, reason, nextAction: 'stop' } };
+    }
+    return { status: 200, body: { ...body, state: 'answer_ready', nextAction: 'answer', reason: 'CONVERSATIONAL_ANSWER',
+      freshnessStatus: 'not_applicable', answer: {
+        response, sources: [], provenance: 'arcanos-trinity', requestId: body.requestId, grounding: 'model_knowledge'
+      } } };
+  }
+
   function runOnce(workflow: Workflow, key: string, payload: unknown, context: GamingHybridCallContext,
     work: () => Promise<GamingHybridResult>): Promise<GamingHybridResult> {
     const digest = hash(payload);
@@ -867,7 +899,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     return promise;
   }
   async function discoverForQuery(context: GamingHybridCallContext, workflow: Workflow, initial: GamingHybridResult): Promise<GamingHybridResult> {
-    if (workflow.input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION
+    if (workflow.pipeline.conversation || workflow.input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION
       || !getEnvBoolean('ARCANOS_GAMING_HYBRID_BACKEND_DISCOVERY_ENABLED', false)
       || workflow.pipeline.guideUrls?.length) return initial;
     const generationReserveMs = backendGenerationReserveMs(workflow.pipeline.mode);
@@ -956,6 +988,31 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (validateGamingPlayerContextInput(input)) return failure(context, 'INVALID_REQUEST', 400, undefined, input.contractVersion);
       input.requestedVersion ??= input.version;
       if (input.version && input.requestedVersion !== input.version) return failure(context, 'VERSION_CONTEXT_CONFLICT', 400, undefined, input.contractVersion);
+      const assistance = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? input.semanticAssistance : undefined;
+      const originalGuideUrls = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? gamingHybridRequiredGuideUrls(input.question) : [];
+      const contextSource = !originalGuideUrls.length && assistance?.requiredSourceUrl
+        ? normalizeGamingHybridCandidateUrl(assistance.requiredSourceUrl) : undefined;
+      const guideUrls = contextSource ? [contextSource] : originalGuideUrls;
+      if (assistance && !guideUrls.length
+        && (assistance.evidenceNeed === 'specific_source' || gamingRequestRefersToSpecificSource(input.question))) {
+        const missing = failure(context, 'SOURCE_LINK_REQUIRED', 400, undefined, input.contractVersion);
+        missing.body.clarification = 'Which guide should I use? Please provide the link.';
+        return missing;
+      }
+      const request = { game: input.game, prompt: input.question, mode: input.mode };
+      const versions = assistance ? extractExplicitGamingVersions(request) : [];
+      if (versions.length > 1) return failure(context, 'MULTI_VERSION_SCOPE_UNSUPPORTED', 400, undefined, input.contractVersion);
+      if (versions[0] && input.requestedVersion && versions[0] !== normalizeGamingVersionContext(input.requestedVersion))
+        return failure(context, 'VERSION_CONTEXT_CONFLICT', 400, undefined, input.contractVersion);
+      input.requestedVersion ??= versions[0];
+      const hint = assistance?.evidenceNeed;
+      const explicitFreshness = resolveGamingFreshnessDisposition({ ...request, requestedVersion: input.requestedVersion }) === 'REQUIRED';
+      // The question's explicit patch or live scope takes precedence over hints.
+      const freshnessRequirement = !explicitFreshness && (hint === 'live_status' || hint === 'current_patch') ? hint : undefined;
+      const research = !assistance || hint !== undefined || guideUrls.length > 0 || explicitFreshness
+        || gamingRequestNeedsSources(input.question);
+      const interpretation = assistance?.interpretation;
+      const conversation = research ? undefined : interpretation ? { interpretation: redactString(interpretation) } : {};
       const key = hash([context.actorKey, input.idempotencyKey]);
       if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION && expiredQueries.has(key))
         return failure(context, 'WORKFLOW_EXPIRED', 409, undefined, input.contractVersion);
@@ -1043,7 +1100,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         workflows.delete(prior.workflowId);
       }
       const actor = hash(context.actorKey);
-      const budgetKey = queryBudgetKey(actor, input);
+      const budgetKey = queryBudgetKey(actor, input, conversation, contextSource);
       const retainedId = budgets.get(budgetKey);
       const retained = retainedId ? workflows.get(retainedId) : undefined;
       if (retained) {
@@ -1052,7 +1109,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         // freshness modes or spoiler/depth preferences. Keep the original workflow
         // intact and withhold its answer when the effective request has changed.
         if (input.mode !== retained.pipeline.mode || incomingContext.spoilerMode !== retained.pipeline.spoilerMode
-          || incomingContext.answerDepth !== retained.pipeline.answerDepth)
+          || incomingContext.answerDepth !== retained.pipeline.answerDepth
+          || freshnessRequirement !== retained.pipeline.freshnessRequirement)
           return failure(context, 'QUERY_CONTEXT_CONFLICT', 409, retained);
         // A new key or a changed storage policy cannot create more search operations.
         // The original storage policy remains authoritative for this retained workflow.
@@ -1078,10 +1136,12 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
         pipeline: { ...playerContext, game: input.game, prompt: input.question,
           mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, edition: resolveGamingRequestEdition(input),
-          guideUrls: input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? gamingHybridRequiredGuideUrls(input.question) : [], auditEnabled: false } };
+          guideUrls, auditEnabled: false, ...(freshnessRequirement ? { freshnessRequirement } : {}),
+          ...(conversation ? { conversation } : {}) } };
       workflows.set(workflow.id, workflow);
       budgets.set(budgetKey, workflow.id);
       const promise = protect(context, workflow, async () => {
+        if (conversation) return answerConversation(context, workflow);
         workflow.knowledge = await deps.retrieve({ ...workflow.pipeline, game: input.game, failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });
         return answer(context, workflow, workflow.knowledge);
       }).then(result => discoverForQuery(context, workflow, result)).then(result => {

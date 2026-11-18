@@ -361,6 +361,10 @@
             "$ref": "#/$defs/GamingHybridAnswerSource"
           }
         },
+        "grounding": {
+          "enum": ["model_knowledge"],
+          "description": "Conversational answer generated without source verification."
+        },
         "provenance": {
           "type": "string",
           "enum": [
@@ -369,6 +373,13 @@
         },
         "requestId": {
           "$ref": "#/$defs/GamingCorrelationIdentifier"
+        }
+      },
+      "dependencies": {
+        "grounding": {
+          "properties": {
+            "sources": { "type": "array", "maxItems": 0 }
+          }
         }
       }
     },
@@ -544,7 +555,7 @@
           "minLength": 8,
           "maxLength": 120,
           "pattern": "^[a-zA-Z0-9._:-]+$",
-          "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          "description": "New operation key; reuse for identical retries."
         },
         "candidates": {
           "type": "array",
@@ -560,13 +571,13 @@
             "gameplay_evidence",
             "currentness_verification"
           ],
-          "description": "Optional operation role. Omit for legacy calls; the backend infers only its pending operation and enforces separate one-shot budgets."
+          "description": "Omit to use the pending backend operation."
         },
         "expectedRevision": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000,
-          "description": "Required only for v2. Must equal the current backend workflow revision; never inferred or advanced by the frontend."
+          "description": "V2 only. Use returned workflow revision."
         }
       },
       "if": {
@@ -712,7 +723,7 @@
           "minLength": 8,
           "maxLength": 120,
           "pattern": "^[a-zA-Z0-9._:-]+$",
-          "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          "description": "New operation key; reuse for identical retries."
         },
         "question": {
           "type": "string",
@@ -840,6 +851,33 @@
           "minLength": 1,
           "maxLength": 64
         },
+        "semanticAssistance": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Versioned request-scoped interpretation hints. Preserve the original question and never provide evidence or authority claims.",
+          "required": ["version"],
+          "properties": {
+            "version": { "enum": ["gaming-semantic-v1"] },
+            "interpretation": {
+              "type": "string",
+              "maxLength": 400,
+              "pattern": "^(?![\\s\\S]*[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}])[\\s\\S]*\\S",
+              "description": "A short interpretation of intent or referents from the conversation, without source text or inferred progression."
+            },
+            "evidenceNeed": {
+              "type": "string",
+              "enum": ["required", "specific_source", "current_patch", "live_status"],
+              "description": "Flag evidence, specific-source, current-patch or live-status needs, including follow-ups. Omission cannot clear a backend evidence requirement."
+            },
+            "requiredSourceUrl": {
+              "type": "string",
+              "format": "uri",
+              "maxLength": 2048,
+              "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://[^/\\s\\p{Cc}\\p{Cf}\\\\][^\\s\\p{Cc}\\p{Cf}\\\\]*$",
+              "description": "One literal HTTP(S) URL supplied by the player in the conversation. It requires backend acquisition and does not confer source authority."
+            }
+          }
+        },
         "workflowId": {
           "type": "string",
           "format": "uuid",
@@ -849,7 +887,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000,
-          "description": "V2 clarification continuation only; pair with workflowId and the returned revision."
+          "description": "Pair workflowId with returned revision."
         }
       },
       "dependencies": {
@@ -864,7 +902,8 @@
       "then": {
         "properties": {
           "workflowId": false,
-          "expectedRevision": false
+          "expectedRevision": false,
+          "semanticAssistance": false
         }
       }
     },
@@ -1131,6 +1170,10 @@
           "acceptedGameplayCandidateCount": {
             "maximum": 3,
             "type": "integer"
+          },
+          "answer": {
+            "type": "object",
+            "properties": { "grounding": false }
           },
           "revision": false,
           "selectedCandidateIds": false,
@@ -2397,7 +2440,7 @@
           "minLength": 8,
           "maxLength": 120,
           "pattern": "^[a-zA-Z0-9._:-]+$",
-          "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          "description": "New operation key; reuse for identical retries."
         },
         "candidateIds": {
           "type": "array",
@@ -2465,7 +2508,7 @@
             "character_profile",
             "calculator"
           ],
-          "description": "Untrusted classification hint; ARCANOS determines the stored source type."
+          "description": "Untrusted source type hint."
         },
         "patchVersion": {
           "type": "string",

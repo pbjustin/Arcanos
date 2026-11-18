@@ -1,4 +1,4 @@
-import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
+import { classifyGamingQuestionFreshness, type GamingFreshnessRequirement, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
 import { gamingPlatformEvidenceMatchesRequest, gamingProsePlatformDeclarationPattern, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, gamingRequestTargetsExtraContent, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
@@ -431,6 +431,7 @@ export interface GamingFreshnessEvaluationInput {
   region?: string;
   mode?: string;
   requestedVersion?: string;
+  freshnessRequirement?: GamingFreshnessRequirement;
   evidence: readonly GamingFreshnessEvidence[];
   now?: Date;
 }
@@ -452,18 +453,17 @@ export interface GamingFreshnessEvaluation {
 }
 
 /** A season identity alone cannot verify balance/build claims within that season. */
-export function gamingSeasonalPatchRequired(input: Pick<GamingFreshnessEvaluationInput, 'question' | 'mode' | 'requestedVersion'>): boolean {
-  return classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion }) === 'seasonal'
+export function gamingSeasonalPatchRequired(input: Pick<GamingFreshnessEvaluationInput, 'question' | 'mode' | 'requestedVersion' | 'freshnessRequirement'>): boolean {
+  return classifyGamingQuestionFreshness({ ...input, prompt: input.question }) === 'seasonal'
     && classifyGamingQuestionFreshness({
-    prompt: input.question.replace(/\b(?:(?:current|latest)\s+)?(?:season(?:al)?|battle\s+pass|league)\b/giu, ' '),
-    mode: input.mode, requestedVersion: input.requestedVersion
+    ...input, prompt: input.question.replace(/\b(?:(?:current|latest)\s+)?(?:season(?:al)?|battle\s+pass|league)\b/giu, ' '),
   }) === 'patch_sensitive';
 }
 
 /** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
 export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
   input = { ...input, edition: resolveGamingRequestEdition(input) };
-  const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
+  const classification = classifyGamingQuestionFreshness({ ...input, prompt: input.question });
   const seasonalPatchRequired = gamingSeasonalPatchRequired(input);
   const now = (input.now ?? new Date()).getTime();
   const historical = /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question);

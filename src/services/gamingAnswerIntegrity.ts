@@ -12,7 +12,7 @@ const MARKDOWN_REFERENCE_DEFINITION = /^ {0,3}\[[^\[\]\r\n]+\]:/mu;
 const MARKDOWN_QUOTED_BLOCK = /^ {0,3}((`|~)\2{2,})[^\r\n]*\r?\n[\s\S]*?(?:^ {0,3}\1\2*[ \t]*(?=\r?$)|(?![\s\S]))|^ {0,3}>[^\r\n]*(?:\r?\n(?![ \t]*\r?$)[^\r\n]+)*/gmu;
 const QUOTED_EXCERPT = /`+[^`\r\n]+`+|"[^"]*"|“[^”]*(?:”|(?![\s\S]))|(?:^|[\s(])'(?:[^'\r\n]|(?<=\p{L})'(?=\p{L}))*'|‘[^’]*’/gmu;
 const HTML_MARKUP = /<!--[\s\S]*?(?:-->|(?![\s\S]))|<\/?[a-z][a-z\d-]*(?:\s[^<>]*|\/?)>/giu;
-const EXPLICIT_CITATION_REQUEST = /(?:^|[.!?,;\n]|\band\b)\s*(?:please\s+)?(?:cite\s+(?:(?:your|the|these|guide)\s+){0,2}sources?|(?:include|provide)\s+(?:source\s+)?citations?)(?=\s*[.!?,;]|\s*$)/iu;
+const EXPLICIT_CITATION_REQUEST = /\b(?:cite\s+(?:(?:your|a|an|the|these|actual|official|guide)\s+){0,3}(?:sources?|references?|guides?)|(?:include|provide|give\s+me|show\s+me|with)\s+(?:(?:a|an|the|your|some|verified|actual|official|source)\s+){0,3}(?:citations?|sources?|references?)\b(?!\s+of\b))|(?:^|[.!?,;\n])\s*(?:sources?|citations?)\s*\?/iu;
 const ANSWER_PATCH_REFERENCE = /\b(?:for|on|in)\s+(?:current\s+)?patch\s+(\d+(?:\.\d+){1,2})\b/giu;
 const GUIDE_PATCH_UNCERTAINTY = /(?:^|[.!?](?:\s*\[(?:sources?\s+)?\d+(?:\s*,\s*\d+)*\])?\s+|\r?\n)\s*(?:the|this)\s+guide\s+does\s+not\s+(?:establish|confirm)\s+(?:whether\s+(?:these\s+steps\s+work|(?:the|this)\s+(?:route|strategy|build)\s+works)\s+on|compatibility\s+(?:for|with|on))\s+patch\s+\d+(?:\.\d+){1,2}\.(?=\s|$)/giu;
 
@@ -69,6 +69,24 @@ export function isGamingSourcePartiallyExtracted(source: GamingSource): boolean 
     || Object.values(assessment?.dimensionScores ?? {}).some(dimension => dimension.reasonCodes.includes('EXTRACTION_PARTIAL'));
 }
 
+export function gamingQuestionRequestsCitations(question: string): boolean {
+  const scope = question.replace(/"[^"\r\n]{0,160}"|“[^”\r\n]{0,160}”/gu, ' ')
+    .replace(/\b(?:do\s+not|don['’]t|no\s+need\s+to)\s+(?:cite|include|provide)\s+(?:(?:any|your|the|a|source)\s+){0,3}(?:sources?|citations?|references?|guides?)\b/giu, ' ');
+  return EXPLICIT_CITATION_REQUEST.test(scope);
+}
+
+/** In conversation there are no selected sources to cite or claim to have verified. */
+export function checkGamingConversationalAnswerIntegrity(answer: string): string | undefined {
+  if (!answer.trim() || answer.length > MAX_GAMING_ANSWER_CHARS) return 'INVALID_ANSWER_LENGTH';
+  if ([...answer.matchAll(NUMERIC_CITATION)].length || MARKDOWN_REFERENCE_DEFINITION.test(answer)
+    || /\b(?:https?:\/\/|www\.)|<\s*a\b[^>]*\bhref\s*=/iu.test(answer)) return 'CITATION_PROVENANCE_MISSING';
+  if (gamingAnswerClaimsVerifiedCurrentness(answer)
+    || /^ {0,3}(?:[*#]+\s*)?sources?\s*:/imu.test(answer)
+    || /\b(?:according\s+to\s+(?:the\s+)?(?:official|wiki|guide|source|patch\s+notes)|(?:I|we)\s+(?:personally\s+)?(?:verified|confirmed|checked|looked\s+up|consulted|tested|searched))\b/iu.test(answer)) {
+    return 'UNSUPPORTED_VERIFICATION_CLAIM';
+  }
+}
+
 /** Structural citation and applicability checks for the exact candidate. */
 export function checkGamingAnswerIntegrity(input: {
   answer: string; prompt: string; knowledge: GamingStoredKnowledgeContext; advisory: boolean;
@@ -95,7 +113,7 @@ export function checkGamingAnswerIntegrity(input: {
   }
   const urls = gamingHybridCitationTargets(answer);
   if (urls.some(url => !selectedUrls.has(url))) return 'CITATION_SOURCE_MISMATCH';
-  if (!hasCitedNumber(answer, numeric) && !urls.length && EXPLICIT_CITATION_REQUEST.test(prompt.replace(/"[^"\r\n]{0,160}"|“[^”\r\n]{0,160}”/gu, ' '))) {
+  if (!hasCitedNumber(answer, numeric) && !urls.length && gamingQuestionRequestsCitations(prompt)) {
     return 'CITATION_NOT_FOUND';
   }
   if (advisory && !(answer.includes(GAMING_UNVERIFIED_GUIDE_WARNING) || answer.includes(GAMING_STALE_GUIDE_WARNING))) {
