@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createLiveValidationBudget, LIVE_VALIDATION_BUDGET_CAPS, LiveValidationBudgetError } from './live-validation-budget.mjs';
+import { createLiveValidationBudget, LIVE_VALIDATION_BUDGET_CAPS, LIVE_VALIDATION_CONVERSATIONAL_CASE,
+  LiveValidationBudgetError } from './live-validation-budget.mjs';
 
 const models = [{ id: 'approved-model', inputMicroUsdPerToken: 1, outputMicroUsdPerToken: 2 }];
 const request = { model: models[0].id, inputTokens: 100, outputTokens: 20, stage: 'generation' };
@@ -74,6 +75,54 @@ test('workflow admission cannot reset the budget, replay profiles, or exceed two
   restricted.beginWorkflow('gaming-guide-positive'); restricted.endWorkflow();
   assert.throws(() => restricted.beginWorkflow('gaming-guide-negative'), code('LIVE_VALIDATION_WORKFLOW_LIMIT'));
   assert.equal('register' in budget, false);
+});
+
+test('conversational and grounded workflows spend within one nonresettable $2 and two-workflow cap', () => {
+  const budget = fixture({ models: [{ ...models[0], inputMicroUsdPerToken: 10_000, outputMicroUsdPerToken: 10_000 }] });
+  budget.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  const conversational = budget.reserve(request);
+  budget.settle(conversational, observed);
+  budget.endWorkflow();
+  assert.throws(() => budget.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE), code('LIVE_VALIDATION_WORKFLOW_REPLAY'));
+  budget.beginWorkflow('gaming-guide-positive');
+  const grounded = budget.reserve({ ...request, inputTokens: 60 });
+  budget.settle(grounded, observed);
+  budget.endWorkflow();
+  assert.throws(() => budget.beginWorkflow('gaming-guide-negative'), code('LIVE_VALIDATION_WORKFLOW_LIMIT'));
+  assert.equal(budget.snapshot().usage.reservedSpendMicroUsd, 2_000_000);
+  assert.equal(budget.snapshot().usage.observedSpendMicroUsd, 300_000);
+  assert.equal(budget.snapshot().usage.generationCalls, 2);
+  assert.equal(budget.snapshot().counts.workflows, 2);
+
+  const exhausted = fixture({ limits: { ...LIVE_VALIDATION_BUDGET_CAPS, maxSpendMicroUsd: 200 } });
+  exhausted.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  const first = exhausted.reserve(request);
+  exhausted.settle(first, observed);
+  exhausted.endWorkflow();
+  exhausted.beginWorkflow('gaming-guide-positive');
+  assert.throws(() => exhausted.reserve(request), code('LIVE_VALIDATION_BUDGET_EXHAUSTED'));
+  assert.equal(exhausted.snapshot().usage.reservedSpendMicroUsd, 140);
+  assert.equal(exhausted.snapshot().usage.generationCalls, 1);
+  assert.equal(exhausted.snapshot().closed, true);
+});
+
+test('conversational budget forbids audits and a second generation even after settlement', () => {
+  const audit = fixture();
+  audit.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  assert.throws(() => audit.reserve({ ...request, stage: 'answer_audit' }), code('LIVE_VALIDATION_AUDIT_FORBIDDEN'));
+  assert.equal(audit.snapshot().usage.requests, 0);
+  assert.equal(audit.snapshot().closed, true);
+
+  const conversation = fixture();
+  conversation.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  assert.throws(() => conversation.endWorkflow(), code('LIVE_VALIDATION_GENERATION_REQUIRED'));
+  const id = conversation.reserve(request);
+  assert.throws(() => conversation.reserve(request), code('LIVE_VALIDATION_CONCURRENCY_LIMIT'));
+  conversation.settle(id, observed);
+  assert.throws(() => conversation.reserve(request), code('LIVE_VALIDATION_CONVERSATIONAL_RETRY_FORBIDDEN'));
+  assert.equal(conversation.snapshot().usage.generationCalls, 1);
+  assert.equal(conversation.snapshot().usage.reservedSpendMicroUsd, 140);
+  assert.equal(conversation.snapshot().closed, true);
 });
 
 test('content needs an active positive workflow while model metadata is counted before adapter startup', () => {

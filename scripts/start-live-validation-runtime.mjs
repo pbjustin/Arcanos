@@ -7,9 +7,11 @@ import { assertValidationRoleCredentials, readValidationJson, requireValidation,
 import { validateLiveValidationTarget } from './live-validation-target.mjs';
 import { createLiveValidationSourceGuard } from './live-validation-egress.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
-import { LIVE_VALIDATION_TOKEN_LIMITS } from './live-validation-budget.mjs';
-import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
-import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, LIVE_PREVIEW_PRESENTATION_PROFILE, sanitizeLivePreviewPresentation,
+import { LIVE_VALIDATION_CONVERSATIONAL_CASE, LIVE_VALIDATION_TOKEN_LIMITS } from './live-validation-budget.mjs';
+import { isLiveValidationProfileSuite, isPairedLiveValidationSuite, LIVE_VALIDATION_CONVERSATIONAL_CASE_ID,
+  LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
+import { createLivePreviewEvidence, LIVE_PREVIEW_CONVERSATIONAL_PROFILE, LIVE_PREVIEW_MODE, LIVE_PREVIEW_PRESENTATION_PROFILE,
+  sanitizeLivePreviewPresentation,
   verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -32,6 +34,13 @@ export function resolveLiveValidationModels(models, constants) {
 export function validationProfilePassed(profile, moduleResult, observation, providerDelta) {
   if (observation?.schemaVersion !== 2 || observation.outcome !== profile.expected.outcome
     || observation.semanticGap !== profile.expected.semanticGap || providerDelta.auditCalls !== 0) return false;
+  if (profile.id === LIVE_VALIDATION_CONVERSATIONAL_CASE) return moduleResult.accepted === true
+    && moduleResult.answerGrounding === 'model_knowledge'
+    && sanitizeLivePreviewPresentation(moduleResult.presentation) !== null
+    && sanitizeLivePreviewPresentation(observation.presentation) !== null
+    && observation.selectedCandidateCount === 0 && observation.selectedEvidenceCount === 0
+    && observation.candidates.length === 0 && observation.coverage.satisfied === false
+    && providerDelta.generationCalls === 1 && providerDelta.providerCalls === 1;
   if (profile.id === 'gaming-guide-positive') return moduleResult.accepted === true
     && sanitizeLivePreviewPresentation(moduleResult.presentation) !== null
     && sanitizeLivePreviewPresentation(observation.presentation) !== null && observation.coverage.satisfied
@@ -53,7 +62,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
   requireValidation(Array.isArray(profileSuites) && profileSuites.length > 0
     && profileSuites.length <= LIVE_VALIDATION_PROFILE_NAMES.length, 'LIVE_VALIDATION_PROFILE_INVALID');
   const profilesByHash = new Map(profileSuites.map(suite => {
-    requireValidation(suite?.version === 2 && suite.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE,
+    requireValidation(isLiveValidationProfileSuite(suite),
       'LIVE_VALIDATION_PROFILE_INVALID');
     return [validationHash(suite), suite];
   }));
@@ -109,7 +118,8 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
         const responseModelIdentity = await resolveResponseModelIdentity();
         requireValidation(body.expiresAtMs > now(), 'LIVE_VALIDATION_RUN_EXPIRED');
         const provider = createProvider({ target, identity, apiKey, now, expiresAtMs: body.expiresAtMs,
-          observation: () => observation, getRemainingMs, responseModelIdentity, generationOnly: true });
+          observation: () => observation, getRemainingMs, responseModelIdentity, generationOnly: true,
+          pairedGtaIv: isPairedLiveValidationSuite(profileSuite) });
         admitted = { ...body, profileSuite, provider, observation };
         try {
           admitted.adapter = await createAdapter({ target, identity, provider });
@@ -131,7 +141,10 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       requireValidation(!active, 'LIVE_VALIDATION_CONCURRENCY_LIMIT');
       const body = await readValidationJson(request, 32_768);
       const profile = admitted.profileSuite.profiles.find(item => item.id === body?.caseId);
-      requireValidation(profile && body.runId === admitted.runId && Object.keys(body).length === 3
+      const paired = isPairedLiveValidationSuite(admitted.profileSuite);
+      const conversational = profile?.caseId === LIVE_VALIDATION_CONVERSATIONAL_CASE_ID;
+      requireValidation(profile && (!paired || profile === admitted.profileSuite.profiles[completed.size])
+        && !admitted.provider.snapshot().closed && body.runId === admitted.runId && Object.keys(body).length === 3
         && !completed.has(profile.id) && !active && admitted.expiresAtMs > now()
         && validationHash(body.input) === validationHash(profile.input), 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
       const parsed = admitted.adapter.validateInput(body.input); requireValidation(parsed.ok, 'LIVE_VALIDATION_PROFILE_INVALID');
@@ -154,7 +167,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
             onSourceAcquisition: status => { stages.source_acquisition = status; },
             onSourceValidation: status => { stages.source_validation = status; },
             onFailure: () => {},
-          }));
+          }, conversational ? 'model_knowledge' : undefined));
           const settle = () => { executionSettled = true; releaseExecution(); };
           void execution.then(settle, settle); return execution;
         });
@@ -170,7 +183,8 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       const evidence = createLivePreviewEvidence({ sourceCommit: identity.sourceCommit,
         approvedSourceCommit: identity.sourceCommit, deploymentId: identity.deploymentId, moduleId: 'gaming', mode: LIVE_PREVIEW_MODE }, {
         caseId: profile.caseId, result: moduleResult.result, presentation: moduleResult.presentation, failureCode,
-        acceptanceProfile: admitted.profileSuite.acceptanceProfile,
+        answerGrounding: moduleResult.answerGrounding,
+        acceptanceProfile: conversational ? LIVE_PREVIEW_CONVERSATIONAL_PROFILE : LIVE_PREVIEW_PRESENTATION_PROFILE,
         usage: { ...after.usage, ...delta, limits: after.limits }, stages: {
           authorization: 'passed', budget: admitted.observation.budgetExhausted ? 'exhausted' : 'passed', ...stages,
           generation: failureCode === 'MODEL_TIMEOUT' ? 'timed_out'
@@ -178,11 +192,13 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
           answer_audit: 'not_run', delivery: semanticPass && moduleResult.accepted ? 'passed' : 'rejected' } });
       const verification = verifyLivePreviewEvidence(evidence, { sourceCommit: identity.sourceCommit,
         approvedSourceCommit: identity.sourceCommit, deploymentId: identity.deploymentId, moduleId: 'gaming', mode: LIVE_PREVIEW_MODE });
+      const profilePassed = semanticPass && verification.status === 'PASS';
+      if (paired && !profilePassed) admitted.provider.close();
       if (observation) observation.stages.response = { status: 'passed', elapsedMs: Math.max(0, now() - constructionStarted) };
       const value = { identity, caseId: profile.id, evidence, observation, verification,
-        profilePassed: semanticPass && verification.status === 'PASS', providerDelta: delta,
+        profilePassed, providerDelta: delta,
         durableWrites: 0, playerPersistence: 0, productionChanged: false,
-        ...(semanticPass && verification.status === 'PASS' && moduleResult.privateAnswer
+        ...(profilePassed && moduleResult.privateAnswer
           ? { privateAnswer: moduleResult.privateAnswer } : {}) };
       const serialized = JSON.stringify(value);
       requireValidation(!serialized.includes(testToken) && (!apiKey || !serialized.includes(apiKey)), 'LIVE_VALIDATION_SECRET_IN_EVIDENCE');

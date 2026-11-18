@@ -3,7 +3,8 @@ export const LIVE_VALIDATION_BUDGET_CAPS = Object.freeze({ maxSpendMicroUsd: 2_0
   maxRequests: 32, maxWorkflows: 2, durationMs: 600_000 });
 export const LIVE_VALIDATION_TOKEN_LIMITS = Object.freeze({ maxInputTokensPerRequest: 128_000,
   maxOutputTokensPerRequest: 4_096, maxTotalTokens: 400_000 });
-const CASES = new Set(['gaming-guide-positive', 'gaming-guide-negative']);
+export const LIVE_VALIDATION_CONVERSATIONAL_CASE = 'gaming-guide-conversational';
+const CASES = new Set(['gaming-guide-positive', 'gaming-guide-negative', LIVE_VALIDATION_CONVERSATIONAL_CASE]);
 const STAGES = new Set(['generation', 'answer_audit', 'metadata']);
 const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 
@@ -47,6 +48,7 @@ export function createLiveValidationBudget({ limits: configured = LIVE_VALIDATIO
     'reservedInputTokens', 'reservedOutputTokens', 'reservedTotalTokens', 'reservedSpendMicroUsd',
     'observedInputTokens', 'observedOutputTokens', 'observedSpendMicroUsd'].map(key => [key, 0]));
   const workflows = new Set(); let workflow; let pending; let closed = false;
+  let conversationalGenerationReserved = false;
   function close() { closed = true; }
   function current() {
     const value = now();
@@ -74,14 +76,25 @@ export function createLiveValidationBudget({ limits: configured = LIVE_VALIDATIO
       workflows.add(caseId); workflow = caseId;
     },
     endWorkflow() {
-      current(); requireBudget(workflow && !pending, 'LIVE_VALIDATION_WORKFLOW_INVALID'); workflow = undefined;
+      current(); requireBudget(workflow && !pending, 'LIVE_VALIDATION_WORKFLOW_INVALID');
+      requireBudget(workflow !== LIVE_VALIDATION_CONVERSATIONAL_CASE || conversationalGenerationReserved,
+        'LIVE_VALIDATION_GENERATION_REQUIRED');
+      workflow = undefined;
     },
     reserve(request) {
       current(); requireBudget(!pending, 'LIVE_VALIDATION_CONCURRENCY_LIMIT');
       requireBudget(plain(request, ['model', 'inputTokens', 'outputTokens', 'stage']) && STAGES.has(request.stage),
         'LIVE_VALIDATION_BUDGET_RESERVATION_INVALID');
       if (workflow === 'gaming-guide-negative') { close(); throw new LiveValidationBudgetError('LIVE_VALIDATION_NEGATIVE_PROVIDER_FORBIDDEN'); }
-      requireBudget(request.stage === 'metadata' || workflow === 'gaming-guide-positive', 'LIVE_VALIDATION_WORKFLOW_REQUIRED');
+      const conversationalContent = workflow === LIVE_VALIDATION_CONVERSATIONAL_CASE && request.stage !== 'metadata';
+      if (conversationalContent && request.stage !== 'generation') {
+        close(); throw new LiveValidationBudgetError('LIVE_VALIDATION_AUDIT_FORBIDDEN');
+      }
+      if (conversationalContent && conversationalGenerationReserved) {
+        close(); throw new LiveValidationBudgetError('LIVE_VALIDATION_CONVERSATIONAL_RETRY_FORBIDDEN');
+      }
+      requireBudget(request.stage === 'metadata' || workflow === 'gaming-guide-positive' || conversationalContent,
+        'LIVE_VALIDATION_WORKFLOW_REQUIRED');
       const model = approvedModels.find(candidate => candidate.id === request.model);
       requireBudget(model, 'LIVE_VALIDATION_MODEL_UNAPPROVED');
       requireBudget(integer(request.inputTokens, 0, limits.maxInputTokensPerRequest)
@@ -101,6 +114,7 @@ export function createLiveValidationBudget({ limits: configured = LIVE_VALIDATIO
       usage.reservedInputTokens += request.inputTokens; usage.reservedOutputTokens += request.outputTokens;
       usage.reservedTotalTokens += request.inputTokens + request.outputTokens;
       usage.reservedSpendMicroUsd += reservedSpendMicroUsd;
+      if (conversationalContent) conversationalGenerationReserved = true;
       pending = { ...request, id: usage.requests, modelPrice: model }; return pending.id;
     },
     settle(id, observed) {

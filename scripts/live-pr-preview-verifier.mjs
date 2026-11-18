@@ -6,6 +6,7 @@ import citationSyntax from '../src/shared/gaming/gamingCitationSyntax.json' with
 export const LIVE_PREVIEW_MODE = 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE = 'grounded-audited-answer-v1';
 export const LIVE_PREVIEW_PRESENTATION_PROFILE = 'grounded-presented-answer-v2';
+export const LIVE_PREVIEW_CONVERSATIONAL_PROFILE = 'conversational-presented-answer-v1';
 export const LIVE_PREVIEW_PRESENTATION_POLICY = 'gaming-clear-presentation/v1';
 const STAGE_NAMES = Object.freeze(['authorization', 'budget', 'source_acquisition', 'source_validation', 'generation', 'answer_audit', 'delivery']);
 const STAGE_STATUSES = new Set(['not_run', 'passed', 'rejected', 'failed', 'timed_out', 'exhausted']);
@@ -13,6 +14,7 @@ const AUDIT_STATUSES = new Set(['completed', 'unavailable', 'not_run']);
 const AUDIT_DECISIONS = new Set(['accept', 'partial', 'reject', 'clarify', 'unavailable']);
 const MAX_AUDIT_FINDINGS = 32;
 const NUMERIC_CITATION = new RegExp(citationSyntax.numericReferencePattern, 'giu');
+const CONVERSATIONAL_SOURCE_REFERENCE = /\b(?:[a-z][a-z\d+.-]{1,31}:\/\/|www\.)|(?:^|[\s<(\[])\/\/[\p{L}\p{N}]|<\s*a\b[^>]*\bhref\s*=|^ {0,3}\[[^\[\]\r\n]+\]:|\[[^\[\]\r\n]+\]\[[^\[\]\r\n]*\]|<(?:[a-z][a-z\d+.-]{1,31}:[^<>\s]+|[^<>\s]+@[^<>\s]+)>/imu;
 // Model finding strings are untrusted even when they match the CLEAR code syntax.
 const AUDIT_REJECTION_FINDING_CODES = new Set([
   ...answerFindingCodes.blocking, ...answerFindingCodes.policy, answerFindingCodes.other
@@ -20,6 +22,7 @@ const AUDIT_REJECTION_FINDING_CODES = new Set([
 const COUNT_FIELDS = Object.freeze(['requests', 'providerCalls', 'generationCalls', 'auditCalls', 'reservedInputTokens', 'reservedOutputTokens', 'reservedTotalTokens', 'reservedSpendMicroUsd', 'observedInputTokens', 'observedOutputTokens', 'observedSpendMicroUsd', 'elapsedMs']);
 const LIMIT_FIELDS = Object.freeze(['maxRequests', 'maxInputTokensPerRequest', 'maxOutputTokensPerRequest', 'maxTotalTokens', 'durationMs', 'maxSpendMicroUsd']);
 const GROUNDING_COUNTS = Object.freeze(['fetchedSuppliedSourceCount', 'usableSourceCount', 'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount']);
+const CONVERSATIONAL_GROUNDING_COUNTS = Object.freeze(['requestedSourceCount', 'fetchedSourceCount', ...GROUNDING_COUNTS]);
 const stages = (...values) => Object.freeze(Object.fromEntries(STAGE_NAMES.map((name, index) => [name, values[index]])));
 
 // The adapter-normalized payload belongs to the operator. These expected boundaries are module independent.
@@ -34,9 +37,14 @@ export const LIVE_PREVIEW_CASE_MANIFEST = Object.freeze([
   { caseId: 'unauthorized_test_identity', failureCode: 'UNAUTHORIZED_TEST_IDENTITY', provider: 'none', stages: stages('rejected', 'not_run', 'not_run', 'not_run', 'not_run', 'not_run', 'rejected') },
 ].map(Object.freeze));
 const MANIFEST = new Map(LIVE_PREVIEW_CASE_MANIFEST.map(entry => [entry.caseId, entry]));
-function caseExpectation(caseId, presentation) {
+const CONVERSATIONAL_CASE = Object.freeze({ caseId: 'useful_conversational_guide', failureCode: null, provider: 'single_generation',
+  stages: stages('passed', 'passed', 'not_run', 'not_run', 'passed', 'not_run', 'passed') });
+const isPresentedProfile = profile => profile === LIVE_PREVIEW_PRESENTATION_PROFILE || profile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
+function caseExpectation(caseId, profile) {
+  if (profile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE) return caseId === CONVERSATIONAL_CASE.caseId ? CONVERSATIONAL_CASE : undefined;
   const expected = MANIFEST.get(caseId);
-  if (!presentation) return expected;
+  if (profile === LIVE_PREVIEW_ACCEPTANCE_PROFILE) return expected;
+  if (profile !== LIVE_PREVIEW_PRESENTATION_PROFILE) return undefined;
   if (caseId === 'useful_grounded_guide') return { ...expected, provider: 'generation_only',
     stages: { ...expected.stages, answer_audit: 'not_run' } };
   return caseId === 'audit_timeout' ? undefined : expected;
@@ -155,18 +163,24 @@ export function extractLivePreviewNumericCitations(answer) {
     .flatMap(match => (match[1] ?? match[2])?.split(',').map(value => Number(value.trim())) ?? []);
 }
 
+/** Verify source-free text without projecting citation labels or URLs. */
+export function livePreviewSourceReferencesAbsent(answer) {
+  return typeof answer === 'string' && answer.matchAll(NUMERIC_CITATION).next().done === true
+    && !CONVERSATIONAL_SOURCE_REFERENCE.test(answer);
+}
+
 export function sanitizeLivePreviewPresentation(value) {
   return isRecord(value) && value.policyVersion === LIVE_PREVIEW_PRESENTATION_POLICY && value.boundToFinalAnswer === true
     ? { policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true } : null;
 }
 
-function sanitizedResult(result, bound) {
+function sanitizedResult(result, bound, isConversation, answerGrounding) {
   const envelope = isRecord(result) ? result : {};
   const data = isRecord(envelope.data) ? envelope.data : {};
   const grounding = isRecord(data.grounding) ? data.grounding : {};
   const response = typeof data.response === 'string' ? data.response : '';
   const sourceList = Array.isArray(data.sources) ? data.sources : [];
-  const sources = sourceList.slice(0, 8).map((source, index) => {
+  const sources = isConversation ? [] : sourceList.slice(0, 8).map((source, index) => {
     const value = isRecord(source) ? source : {};
     const normalizedUrl = normalizedSourceUrl(value.url);
     return { index: index + 1, url: sanitizedSourceUrl(normalizedUrl),
@@ -174,7 +188,7 @@ function sanitizedResult(result, bound) {
       usable: typeof value.snippet === 'string' && value.snippet.trim().length > 0 && !value.error };
   });
   // The live profile uses numeric references to check the ordered source list.
-  const references = extractLivePreviewNumericCitations(response);
+  const references = isConversation ? [] : extractLivePreviewNumericCitations(response);
   const citationIndices = [...new Set(references)].sort((a, b) => a - b).slice(0, 32);
   const citationsResolved = references.length > 0 && references.length <= 128 && references.every(index =>
     Number.isSafeInteger(index) && index > 0 && sources.some(source => source.index === index && source.url && source.usable));
@@ -183,19 +197,24 @@ function sanitizedResult(result, bound) {
   const incomplete = envelope.incomplete === true || data.incomplete === true || data.fallbackReason === 'PROVIDER_COMPLETION_INCOMPLETE';
   return { ok: envelope.ok === true, answerPresent: response.trim().length > 0, fallback, dryRun, incomplete,
     grounding: { status: boundedEnum(grounding.groundingStatus, new Set(['grounded', 'insufficient_evidence', 'unavailable']), 'unobserved'),
-      groundedInSuppliedEvidence: grounding.groundedInSuppliedEvidence === true,
-      ...Object.fromEntries(GROUNDING_COUNTS.map(name => [name, count(grounding[name])])) },
+      groundedInSuppliedEvidence: isConversation && typeof grounding.groundedInSuppliedEvidence !== 'boolean'
+        ? null : grounding.groundedInSuppliedEvidence === true,
+      ...Object.fromEntries((isConversation ? CONVERSATIONAL_GROUNDING_COUNTS : GROUNDING_COUNTS).map(name => [name, count(grounding[name])])) },
     sources, citationIndices, citationsResolved,
+    ...(isConversation ? { answerGrounding: answerGrounding === 'model_knowledge' ? answerGrounding : null,
+      sourceCount: Array.isArray(data.sources) ? data.sources.length : null,
+      sourceReferencesAbsent: livePreviewSourceReferencesAbsent(response) } : {}),
     acceptedAnswer: envelope.ok === true && response.trim().length > 0 && !fallback && !dryRun && !incomplete
       && bound };
 }
 
 /** The private backend supplies versioned binding and stage observations independently of the answer body. */
 export function createLivePreviewEvidence(identity, { caseId, result, audit, usage, failureCode, stages: observedStages,
-  acceptanceProfile = LIVE_PREVIEW_ACCEPTANCE_PROFILE, presentation } = {}) {
+  acceptanceProfile = LIVE_PREVIEW_ACCEPTANCE_PROFILE, presentation, answerGrounding } = {}) {
   const safeIdentity = requireIdentity(identity);
-  const isPresentation = acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
-  if ((!isPresentation && acceptanceProfile !== LIVE_PREVIEW_ACCEPTANCE_PROFILE) || !caseExpectation(caseId, isPresentation)) {
+  const isConversation = acceptanceProfile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
+  const isPresentation = isPresentedProfile(acceptanceProfile);
+  if (!caseExpectation(caseId, acceptanceProfile) || (isConversation && safeIdentity.moduleId !== 'gaming')) {
     throw new Error('LIVE_PREVIEW_CASE_INVALID');
   }
   const observedAudit = isRecord(audit) ? audit : {};
@@ -208,7 +227,7 @@ export function createLivePreviewEvidence(identity, { caseId, result, audit, usa
   return { schemaVersion: isPresentation ? 2 : 1, acceptanceProfile, identity: safeIdentity, caseId,
     failureCode: failureCode === undefined || failureCode === null ? null : boundedEnum(failureCode, FAILURE_CODES, 'UNOBSERVED_FAILURE'),
     stages: Object.fromEntries(STAGE_NAMES.map(name => [name, boundedEnum(observations[name], STAGE_STATUSES, 'unobserved')])),
-    result: sanitizedResult(result, bound), ...(isPresentation ? { presentation: safePresentation } : { audit: safeAudit }),
+    result: sanitizedResult(result, bound, isConversation, answerGrounding), ...(isPresentation ? { presentation: safePresentation } : { audit: safeAudit }),
     usage: sanitizedUsage(usage),
     verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' },
     remainingGaps: [...REMAINING_GAPS] };
@@ -233,8 +252,9 @@ function usageValid(usage) {
 
 export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
   const value = isRecord(evidence) ? evidence : {};
-  const isPresentation = value.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
-  const expected = caseExpectation(value.caseId, isPresentation);
+  const isConversation = value.acceptanceProfile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
+  const isPresentation = isPresentedProfile(value.acceptanceProfile);
+  const expected = caseExpectation(value.caseId, value.acceptanceProfile);
   const identity = value.identity;
   const observations = isRecord(value.stages) ? value.stages : {};
   const result = isRecord(value.result) ? value.result : {};
@@ -245,6 +265,7 @@ export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
   check('schema', isPresentation ? value.schemaVersion === 2 && !Object.hasOwn(value, 'audit') : value.schemaVersion === 1);
   check('reviewed_acceptance_profile', isPresentation || value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE);
   check('exact_approved_identity', identityValid(identity) && identityValid(expectedIdentity)
+    && (!isConversation || identity.moduleId === 'gaming')
     && ['sourceCommit', 'approvedSourceCommit', 'deploymentId', 'moduleId', 'mode'].every(name => identity[name] === expectedIdentity[name]));
   check('known_case', Boolean(expected));
   check('bounded_resources', usageValid(usage));
@@ -256,12 +277,23 @@ export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
       || observations[name] === expected.stages[name]));
   const noProviders = usage.providerCalls === 0 && usage.generationCalls === 0 && usage.auditCalls === 0;
   check('expected_provider_stages', expected?.provider === 'none' ? noProviders
-    : expected?.provider === 'generation_only' ? usage.generationCalls > 0 && usage.auditCalls === 0
-      : expected?.provider === 'generation_and_audit' && usage.generationCalls > 0 && usage.auditCalls > 0);
-  if (expected?.caseId === 'useful_grounded_guide') {
-    const grounding = isRecord(result.grounding) ? result.grounding : {};
+    : expected?.provider === 'single_generation' ? usage.providerCalls === 1 && usage.generationCalls === 1 && usage.auditCalls === 0
+      : expected?.provider === 'generation_only' ? usage.generationCalls > 0 && usage.auditCalls === 0
+        : expected?.provider === 'generation_and_audit' && usage.generationCalls > 0 && usage.auditCalls > 0);
+  if (expected?.failureCode === null) {
     check('complete_answer', result.ok === true && result.answerPresent === true && result.acceptedAnswer === true
       && result.fallback === false && result.dryRun === false && result.incomplete === false);
+  }
+  if (expected?.caseId === CONVERSATIONAL_CASE.caseId) {
+    const grounding = isRecord(result.grounding) ? result.grounding : {};
+    check('model_knowledge_grounding', result.answerGrounding === 'model_knowledge' && grounding.status === 'unavailable'
+      && grounding.groundedInSuppliedEvidence === false && CONVERSATIONAL_GROUNDING_COUNTS.every(name => grounding[name] === 0));
+    check('no_source_references', result.sourceCount === 0 && Array.isArray(result.sources) && result.sources.length === 0
+      && Array.isArray(result.citationIndices) && result.citationIndices.length === 0 && result.citationsResolved === false
+      && result.sourceReferencesAbsent === true);
+    check('bound_presentation_integrity', sanitizeLivePreviewPresentation(value.presentation) !== null);
+  } else if (expected?.caseId === 'useful_grounded_guide') {
+    const grounding = isRecord(result.grounding) ? result.grounding : {};
     check('acquired_supplied_grounding', grounding.status === 'grounded' && grounding.groundedInSuppliedEvidence === true
       && GROUNDING_COUNTS.every(name => Number.isSafeInteger(grounding[name]) && grounding[name] > 0));
     const sourceList = Array.isArray(result.sources) ? result.sources : [];
@@ -280,7 +312,7 @@ export function verifyLivePreviewEvidence(evidence, expectedIdentity) {
   }
   const passed = checks.every(item => item.status === 'PASS');
   return { status: passed ? 'PASS' : 'FAIL', code: passed ? 'LIVE_PREVIEW_CASE_PASS' : 'LIVE_PREVIEW_CASE_FAILED',
-    caseId: expected?.caseId ?? 'unobserved', accepted: passed && expected?.caseId === 'useful_grounded_guide', checks };
+    caseId: expected?.caseId ?? 'unobserved', accepted: passed && expected?.failureCode === null, checks };
 }
 
 export function verifyLivePreviewSuite(evidence, expectedIdentity) {
@@ -307,7 +339,8 @@ export function sanitizeLivePreviewEvidence(value) {
   const STAGES = STAGE_NAMES;
   const COUNTS = COUNT_FIELDS;
   const LIMITS = [...LIMIT_FIELDS, 'maxConcurrency', 'maxRetries'];
-  const isPresentation = value?.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE;
+  const isConversation = value?.acceptanceProfile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
+  const isPresentation = isPresentedProfile(value?.acceptanceProfile);
   requireE2e(record(value) && record(value.identity) && record(value.result)
     && (isPresentation ? value.schemaVersion === 2 && !Object.hasOwn(value, 'audit')
       && (value.presentation === null || sanitizeLivePreviewPresentation(value.presentation) !== null) : record(value.audit))
@@ -317,10 +350,11 @@ export function sanitizeLivePreviewEvidence(value) {
     && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(identity.deploymentId ?? '')
     && identity.mode === LIVE_PREVIEW_MODE && /^[a-z][a-z0-9_-]{0,63}$/u.test(identity.moduleId ?? '')
     && (isPresentation || value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE)
-    && caseExpectation(value.caseId, isPresentation), 'LIVE_PREVIEW_EVIDENCE_INVALID');
+    && (!isConversation || identity.moduleId === 'gaming')
+    && caseExpectation(value.caseId, value.acceptanceProfile), 'LIVE_PREVIEW_EVIDENCE_INVALID');
   const result = value.result;
-  requireE2e(Array.isArray(result.sources) && result.sources.length <= 8
-    && Array.isArray(result.citationIndices) && result.citationIndices.length <= 32,
+  requireE2e(Array.isArray(result.sources) && result.sources.length <= (isConversation ? 0 : 8)
+    && Array.isArray(result.citationIndices) && result.citationIndices.length <= (isConversation ? 0 : 32),
   'LIVE_PREVIEW_EVIDENCE_INVALID');
   const grounding = record(result.grounding) ? result.grounding : {};
   const audit = value.audit;
@@ -351,9 +385,11 @@ export function sanitizeLivePreviewEvidence(value) {
       .map(key => [key, safeBoolean(result[key])])),
       grounding: { status: safeEnum(grounding.status, ['grounded', 'insufficient_evidence', 'unavailable']),
         groundedInSuppliedEvidence: safeBoolean(grounding.groundedInSuppliedEvidence),
-        ...Object.fromEntries(['fetchedSuppliedSourceCount', 'usableSourceCount', 'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount']
+        ...Object.fromEntries((isConversation ? CONVERSATIONAL_GROUNDING_COUNTS : GROUNDING_COUNTS)
           .map(key => [key, safeCount(grounding[key])])) }, sources,
-      citationIndices: result.citationIndices.map(safeCount) },
+      citationIndices: result.citationIndices.map(safeCount),
+      ...(isConversation ? { answerGrounding: result.answerGrounding === 'model_knowledge' ? result.answerGrounding : null,
+        sourceCount: safeCount(result.sourceCount), sourceReferencesAbsent: safeBoolean(result.sourceReferencesAbsent) } : {}) },
     ...(isPresentation ? { presentation: sanitizeLivePreviewPresentation(value.presentation) } : {
       audit: { assessmentStatus: safeEnum(audit.assessmentStatus, ['completed', 'unavailable', 'not_run']),
         decision: safeEnum(audit.decision, ['accept', 'partial', 'reject', 'clarify', 'unavailable']), boundToFinalAnswer: safeBoolean(audit.boundToFinalAnswer) } }),

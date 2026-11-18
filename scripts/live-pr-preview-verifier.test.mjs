@@ -4,8 +4,12 @@ import { test } from 'node:test';
 import {
   LIVE_PREVIEW_CASE_MANIFEST,
   LIVE_PREVIEW_ACCEPTANCE_PROFILE,
+  LIVE_PREVIEW_CONVERSATIONAL_PROFILE,
   LIVE_PREVIEW_MODE,
+  LIVE_PREVIEW_PRESENTATION_POLICY,
+  LIVE_PREVIEW_PRESENTATION_PROFILE,
   createLivePreviewEvidence,
+  livePreviewSourceReferencesAbsent,
   sanitizeLivePreviewEvidence,
   verifyLivePreviewEvidence,
   verifyLivePreviewSuite,
@@ -326,4 +330,106 @@ test('presentation v2 accepts structurally bound delivery without a scored audit
   assert.equal(verifyLivePreviewSuite(historical, identity).status, 'PASS');
   historical[0] = evidence;
   assert.equal(verifyLivePreviewSuite(historical, identity).status, 'FAIL');
+});
+
+
+function conversationalInput() {
+  const cumulativeUsage = usageFor('useful_grounded_guide');
+  return { caseId: 'useful_conversational_guide', acceptanceProfile: LIVE_PREVIEW_CONVERSATIONAL_PROFILE,
+    answerGrounding: 'model_knowledge', failureCode: null,
+    presentation: { policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true },
+    stages: { authorization: 'passed', budget: 'passed', source_acquisition: 'not_run', source_validation: 'not_run',
+      generation: 'passed', answer_audit: 'not_run', delivery: 'passed' },
+    usage: { ...cumulativeUsage, providerCalls: 1, generationCalls: 1, auditCalls: 0 },
+    result: { ok: true, data: { response: 'Meet Roman at the cab and follow the marked route.', sources: [],
+      grounding: { groundingStatus: 'unavailable', groundedInSuppliedEvidence: false, requestedSourceCount: 0,
+        fetchedSourceCount: 0, fetchedSuppliedSourceCount: 0, usableSourceCount: 0, citableSourceCount: 0,
+        selectedChunkCount: 0, suppliedEvidenceSourceCount: 0 } } } };
+}
+
+test('binds a separate conversational case to one provider call and keeps historical suites closed', () => {
+  const input = conversationalInput();
+  const evidence = createLivePreviewEvidence(identity, input);
+  assert.equal(evidence.schemaVersion, 2);
+  assert.equal(evidence.result.answerGrounding, 'model_knowledge');
+  assert.equal(evidence.result.sourceCount, 0);
+  assert.equal(evidence.result.sourceReferencesAbsent, true);
+  assert.equal(Object.hasOwn(evidence, 'audit'), false);
+  const sanitized = sanitizeLivePreviewEvidence(JSON.parse(JSON.stringify(evidence)));
+  assert.deepEqual(sanitized.result, evidence.result);
+  assert.equal(verifyLivePreviewEvidence(sanitized, identity).accepted, true);
+  assert.equal(verifyLivePreviewEvidence(sanitized, { ...identity, deploymentId: 'different-deployment' }).status, 'FAIL');
+  assert.equal(verifyLivePreviewSuite([evidence], identity).status, 'FAIL');
+  assert.throws(() => createLivePreviewEvidence({ ...identity, moduleId: 'research' }, input), /LIVE_PREVIEW_CASE_INVALID/u);
+  for (const acceptanceProfile of [LIVE_PREVIEW_ACCEPTANCE_PROFILE, LIVE_PREVIEW_PRESENTATION_PROFILE]) {
+    assert.throws(() => createLivePreviewEvidence(identity, { ...input, acceptanceProfile }), /LIVE_PREVIEW_CASE_INVALID/u);
+  }
+  assert.throws(() => createLivePreviewEvidence(identity, { ...input, caseId: 'useful_grounded_guide' }), /LIVE_PREVIEW_CASE_INVALID/u);
+  assert.equal(Object.hasOwn(makeEvidence().result, 'answerGrounding'), false);
+});
+
+test('rejects incomplete conversational evidence after receipt sanitization', () => {
+  for (const mutate of [
+    input => { delete input.answerGrounding; },
+    input => { delete input.presentation; },
+    input => { input.result.data.answerGrounding = 'model_knowledge'; delete input.answerGrounding; },
+    input => { input.result.ok = false; },
+    input => { input.result.data.response = ' '; },
+    input => { input.result.data.fallbackReason = 'SYNTHETIC_FALLBACK'; },
+    input => { input.result.data.dryRun = true; },
+    input => { input.result.data.incomplete = true; },
+    input => { input.result.data.grounding.groundingStatus = 'grounded'; },
+    input => { input.result.data.grounding.groundedInSuppliedEvidence = true; },
+    input => { delete input.result.data.grounding.groundedInSuppliedEvidence; },
+    input => { delete input.result.data.sources; },
+    input => { input.stages.source_acquisition = 'passed'; },
+    input => { input.stages.source_validation = 'passed'; },
+    input => { input.stages.generation = 'timed_out'; },
+    input => { input.stages.answer_audit = 'passed'; },
+    input => { input.stages.delivery = 'rejected'; },
+    input => { input.usage.providerCalls = 2; input.usage.generationCalls = 2; },
+    input => { input.usage.providerCalls = 2; input.usage.auditCalls = 1; },
+    input => { input.usage.limits.maxRetries = 1; },
+    input => { input.usage.reservedSpendMicroUsd = input.usage.limits.maxSpendMicroUsd + 1; },
+  ]) {
+    const input = conversationalInput();
+    mutate(input);
+    const evidence = sanitizeLivePreviewEvidence(createLivePreviewEvidence(identity, input));
+    assert.equal(verifyLivePreviewEvidence(evidence, identity).status, 'FAIL');
+  }
+  for (const field of Object.keys(conversationalInput().result.data.grounding).filter(name => name.endsWith('Count'))) {
+    const input = conversationalInput();
+    input.result.data.grounding[field] = 1;
+    const evidence = sanitizeLivePreviewEvidence(createLivePreviewEvidence(identity, input));
+    assert.equal(verifyLivePreviewEvidence(evidence, identity).status, 'FAIL', field);
+  }
+});
+
+test('preserves citation and source rejection without retaining their contents', () => {
+  for (const reference of ['[8982828192]', '(Source 2)', 'https://private.example.com/a', '//private.example.com/a',
+    '[Guide](/private)', '[Guide][source]', '[source]: https://private.example.com/a', '<a href="/private">Guide</a>',
+    '<ftp://private.example.com/a>', '<mailto:player@private.example.com>']) {
+    const input = conversationalInput();
+    input.result.data.response += '\n' + reference;
+    assert.equal(livePreviewSourceReferencesAbsent(input.result.data.response), false);
+    const evidence = createLivePreviewEvidence(identity, input);
+    assert.equal(evidence.result.sourceReferencesAbsent, false);
+    assert.deepEqual(evidence.result.citationIndices, []);
+    assert.equal(JSON.stringify(evidence).includes(reference), false);
+    assert.equal(verifyLivePreviewEvidence(sanitizeLivePreviewEvidence(evidence), identity).status, 'FAIL');
+  }
+  const input = conversationalInput();
+  input.result.data.sources = [{ url: 'https://untrusted-source.example.com/private', snippet: 'private snippet' }];
+  const evidence = createLivePreviewEvidence(identity, input);
+  assert.equal(evidence.result.sourceCount, 1);
+  assert.deepEqual(evidence.result.sources, []);
+  assert.doesNotMatch(JSON.stringify(evidence), /untrusted-source|private/);
+  evidence.result.response = 'private answer body';
+  evidence.presentation.rawAnswer = 'private answer body';
+  const sanitized = sanitizeLivePreviewEvidence(evidence);
+  assert.doesNotMatch(JSON.stringify(sanitized), /private/);
+  assert.equal(verifyLivePreviewEvidence(sanitized, identity).status, 'FAIL');
+  const forged = createLivePreviewEvidence(identity, conversationalInput());
+  forged.result.sources = [input.result.data.sources[0]];
+  assert.throws(() => sanitizeLivePreviewEvidence(forged), /LIVE_PREVIEW_EVIDENCE_INVALID/u);
 });

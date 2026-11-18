@@ -1,0 +1,62 @@
+{
+  "version": 2,
+  "acceptanceProfile": "paired-gta-iv-v1",
+  "sourceReachability": "unverified",
+  "profiles": [
+    {
+      "id": "gaming-guide-conversational",
+      "scenarioId": "gta-iv-opening-boat-no-source",
+      "caseId": "useful_conversational_guide",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Grand Theft Auto IV",
+          "mode": "guide",
+          "question": "I just got off the boat in GTA IV. What now?",
+          "idempotencyKey": "gta-boat1",
+          "storagePolicy": "transient_only",
+          "spoilerTolerance": "none",
+          "semanticAssistance": {
+            "version": "gaming-semantic-v1"
+          }
+        },
+        "candidateUrls": []
+      },
+      "expected": {
+        "outcome": "accepted",
+        "semanticGap": "NONE"
+      }
+    },
+    {
+      "id": "gaming-guide-positive",
+      "scenarioId": "gta-iv-opening-boat-publisher-guide",
+      "caseId": "useful_grounded_guide",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Grand Theft Auto IV",
+          "mode": "guide",
+          "question": "What should I do next? Guide: https://www.gta4.tv/gta4/guides/the-cousins-bellic",
+          "idempotencyKey": "live-validation-gta-iv-boat-positive",
+          "storagePolicy": "transient_only",
+          "progressPoint": "Just got off the boat at the beginning.",
+          "spoilerTolerance": "light"
+        },
+        "candidateUrls": [
+          "https://www.gta4.tv/gta4/guides/the-cousins-bellic"
+        ]
+      },
+      "expected": {
+        "outcome": "accepted",
+        "semanticGap": "NONE",
+        "requiredModelStages": [
+          "intake",
+          "reasoning",
+          "final"
+        ]
+      }
+    }
+  ]
+}

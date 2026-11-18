@@ -134,6 +134,14 @@ const query = {
   class: 'Samurai', progressPoint: 'just left the tutorial', question,
   idempotencyKey: 'test-fixture', storagePolicy: 'transient_only' as const
 };
+const gtaConversationalInput = {
+  query: { contractVersion: 'gaming-hybrid-v2', game: 'Grand Theft Auto IV', mode: 'guide',
+    question: 'I just got off the boat in GTA IV. What now?', storagePolicy: 'transient_only',
+    spoilerTolerance: 'none', semanticAssistance: { version: 'gaming-semantic-v1' },
+    idempotencyKey: 'test-gta-conversational' },
+  candidateUrls: []
+};
+const gtaConversationalAnswer = 'If you are still at the opening docks with Roman, follow the GPS and drive him to his apartment.';
 const advance = (ms: number) => { clock += ms; jest.setSystemTime(clock); };
 
 beforeEach(() => {
@@ -169,7 +177,8 @@ beforeEach(() => {
       advance(elapsedMs);
       if (emitProviderStages) reportStage?.({ stage, phase: 'completed', elapsedMs, ...budget });
     }
-    const result = `${generatedAnswer} [Source 1]`;
+    const result = request.context.runOptions?.directAnswerSystemPolicyPrompt
+      ? generatedAnswer : `${generatedAnswer} [Source 1]`;
     return { result, gamingPresentationPolicy: request.context.runOptions?.gamingPresentationPolicy, fallbackFlag: false, dryRun: false,
       meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
   });
@@ -236,11 +245,122 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
+  it('accepts the separately authorized GTA IV conversation without acquisition or selected evidence', async () => {
+    generatedAnswer = gtaConversationalAnswer;
+    const run = harness();
+    const input = run.adapter.validateInput(gtaConversationalInput);
+    if (!input.ok) throw new Error('Expected valid conversational input.');
+    const output = await run.adapter.execute(input.input, run.observer, 'model_knowledge');
+
+    expect(output).toMatchObject({ accepted: true, answerGrounding: 'model_knowledge',
+      presentation: { policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true },
+      privateAnswer: { version: 2, policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, response: gtaConversationalAnswer, sources: [],
+        subjectHash: gamingClearHash(gtaConversationalAnswer), contextFingerprint: gamingClearHash(gtaConversationalInput.query) } });
+    expect(queryHandoffs[0].result.body).toMatchObject({ sourceKnown: false, evidenceSelected: false,
+      answer: { response: gtaConversationalAnswer, grounding: 'model_knowledge', sources: [] } });
+    expect(run.execute).toHaveBeenCalledTimes(1);
+    expect(run.execute.mock.calls[0][0]).toMatchObject({ conversation: {}, spoilerMode: 'none',
+      prompt: gtaConversationalInput.query.question });
+    expect(run.execute.mock.calls[0][1]).toBeUndefined();
+    expect(mockHttp).not.toHaveBeenCalled();
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(run.observer.onSourceAcquisition).not.toHaveBeenCalled();
+    expect(run.observer.onSourceValidation).not.toHaveBeenCalled();
+    expect(run.adapter.getLastObservation()).toMatchObject({ outcome: 'accepted', semanticGap: 'NONE',
+      selectedCandidateCount: 0, selectedEvidenceCount: 0,
+      stages: { acquisition: { status: 'not_run' }, selection: { status: 'not_run' }, generation: { status: 'passed' } } });
+  });
+
+  it('does not allow semantic assistance to authorize source-free generation in a legacy profile', async () => {
+    const run = harness();
+    const input = run.adapter.validateInput(gtaConversationalInput);
+    if (!input.ok) throw new Error('Expected valid conversational input.');
+    const output = await run.adapter.execute(input.input, run.observer);
+
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('answerGrounding');
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(run.execute).not.toHaveBeenCalled();
+    expect(mockHttp).not.toHaveBeenCalled();
+    expect(mockTrinity).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ...gtaConversationalInput, candidateUrls: [guideUrl] },
+    { ...gtaConversationalInput, query: { ...gtaConversationalInput.query, semanticAssistance: undefined } },
+    { ...gtaConversationalInput, query: { ...gtaConversationalInput.query,
+      semanticAssistance: { ...gtaConversationalInput.query.semanticAssistance, evidenceNeed: 'required' } } },
+    { ...gtaConversationalInput, query: { ...gtaConversationalInput.query, question: 'Use this guide: ' + guideUrl } }
+  ])('rejects conflicting conversational case input before any acquisition or generation (%#)', async raw => {
+    const run = harness();
+    const input = run.adapter.validateInput(raw);
+    if (!input.ok) throw new Error('Expected valid general hybrid input.');
+    const output = await run.adapter.execute(input.input, run.observer, 'model_knowledge');
+
+    expect(output.accepted).toBe(false);
+    expect(output).not.toHaveProperty('answerGrounding');
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(run.execute).not.toHaveBeenCalled();
+    expect(mockHttp).not.toHaveBeenCalled();
+    expect(mockTrinity).not.toHaveBeenCalled();
+  });
+
+  it.each(['fallback', 'evidence claim', 'invented citation'] as const)('withholds conversational delivery on %s', async scenario => {
+    generatedAnswer = scenario === 'invented citation' ? gtaConversationalAnswer + ' [Source 1]' : gtaConversationalAnswer;
+    const run = harness(value => {
+      if (scenario === 'fallback') value.data.fallbackReason = 'INTAKE_RETRIEVAL_FAILED';
+      if (scenario === 'evidence claim' && value.data.grounding) value.data.grounding.fetchedSourceCount = 1;
+      return value;
+    });
+    const input = run.adapter.validateInput(gtaConversationalInput);
+    if (!input.ok) throw new Error('Expected valid conversational input.');
+    const output = await run.adapter.execute(input.input, run.observer, 'model_knowledge');
+
+    expect(output.accepted).toBe(false);
+    expect(output.presentation).toBeUndefined();
+    expect(output).not.toHaveProperty('answerGrounding');
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(mockHttp).not.toHaveBeenCalled();
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['missing marker', 'different answer', 'verified freshness'] as const)('withholds conversational delivery on %s in the final workflow response', async scenario => {
+    generatedAnswer = gtaConversationalAnswer;
+    const workflowAnswers: Array<GamingHybridResponse['answer']> = [];
+    mockWorkflowFactory.mockImplementationOnce(overrides => {
+      const workflow = hybrid.createGamingHybridWorkflow(overrides);
+      return { ...workflow, query: async (payload, context) => {
+        const result = await workflow.query(payload, context);
+        const { answer } = result.body;
+        workflowAnswers.push(structuredClone(answer));
+        if (answer) {
+          if (scenario === 'missing marker') delete answer.grounding;
+          if (scenario === 'different answer') answer.response += ' An unexpected change.';
+          if (scenario === 'verified freshness') result.body.freshnessStatus = 'current';
+        }
+        return result;
+      } };
+    });
+    const run = harness();
+    const input = run.adapter.validateInput(gtaConversationalInput);
+    if (!input.ok) throw new Error('Expected valid conversational input.');
+    const output = await run.adapter.execute(input.input, run.observer, 'model_knowledge');
+
+    expect(workflowAnswers).toEqual([expect.objectContaining({ grounding: 'model_knowledge' })]);
+    expect(output.accepted).toBe(false);
+    expect(output.presentation).toBeUndefined();
+    expect(output).not.toHaveProperty('answerGrounding');
+    expect(output).not.toHaveProperty('privateAnswer');
+    expect(mockHttp).not.toHaveBeenCalled();
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+  });
+
   it('delivers exactly the acquired, bound, qualified starting-Samurai answer and observes actual stage events', async () => {
     const run = harness(); const output = await run.run(); const result = output.result as GamingSuccessEnvelope;
     expect(output.accepted).toBe(true); expect(output.failureCode).toBeUndefined();
     expect(output.presentation).toEqual({ policyVersion: LIVE_PREVIEW_PRESENTATION_POLICY, boundToFinalAnswer: true });
-    const expectedDeliveredAnswer = `${run.execute.mock.calls[0][1].qualification}\n\n${groundedAnswer} [Source 1]`;
+    const expectedDeliveredAnswer = `${run.execute.mock.calls[0][1]?.qualification}\n\n${groundedAnswer} [Source 1]`;
     expect(result.data.response).toBe(expectedDeliveredAnswer); expect(result.data.response).toContain(GAMING_UNVERIFIED_GUIDE_WARNING);
     expect(hasBoundGamingPresentedAnswer(result.data)).toBe(true);
     expect(Object.getOwnPropertyDescriptor(result.data, GAMING_PRESENTED_ANSWER)?.value.subjectHash)
@@ -303,7 +423,7 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(run.execute.mock.calls[0][0]).toMatchObject({ platform: 'PC', constraints: preferences,
       prompt: queryHandoffs[0].payload.question, guideUrls: [sourceUrl] });
     const prepared = run.execute.mock.calls[0][1];
-    expect(prepared.knowledge.evidence?.map(chunk => chunk.recordId)).toEqual(acquired.selectedEvidenceIds);
+    expect(prepared?.knowledge.evidence?.map(chunk => chunk.recordId)).toEqual(acquired.selectedEvidenceIds);
     const finalResult = output.result as GamingSuccessEnvelope;
     expect(finalResult.data.response).toContain(groundedAnswer);
     expect(hasBoundGamingPresentedAnswer(finalResult.data)).toBe(true);

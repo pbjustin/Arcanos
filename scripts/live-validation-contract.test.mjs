@@ -12,13 +12,14 @@ import OpenAI from 'openai';
 import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson, validationHash } from './live-validation-bootstrap.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
+import { readLiveValidationProfiles } from './live-validation-profiles.mjs';
+import { LIVE_PREVIEW_CONVERSATIONAL_PROFILE, LIVE_PREVIEW_PRESENTATION_PROFILE } from './live-pr-preview-verifier.mjs';
 
 const ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const sha = 'a'.repeat(40); const trustedSha = 'b'.repeat(40); const treeSha = 'c'.repeat(40); const compiledSha256 = 'd'.repeat(64);
 const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '22222222-2222-4222-8222-222222222222';
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
 const hash = value => createHash('sha256').update(value).digest('hex');
-const profiles = JSON.parse(readFileSync(path.join(ROOT, 'examples/live-validation/profiles.json'), 'utf8'));
 const git = { head: trustedSha, clean: true, repository: 'pbjustin/Arcanos' };
 function targetFixture() {
   return { version: 'arcanos-live-validation-target/v2', repository: 'pbjustin/Arcanos', projectId: LIVE_VALIDATION_PROJECT_ID,
@@ -44,12 +45,12 @@ function inventory(target, active = false, stopped = false) {
       deploymentTriggers: connection([]), variables: connection([]), volumeInstances: connection([]) },
     privateNetworks: [{ projectId: target.projectId, environmentId: target.environmentId, deletedAt: null }], runtimeTcp: [] };
 }
-function fixture(t) {
+function fixture(t, profile = 'gaming-guide') {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'arcanos-controller-test-')); chmodSync(directory, 0o700);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const target = targetFixture(); const artifactDirectory = path.join(directory, 'artifacts'); mkdirSync(artifactDirectory, { mode: 0o700 });
   writeFileSync(path.join(artifactDirectory, 'source.tar'), 'opaque-source'); writeFileSync(path.join(artifactDirectory, 'build.tar'), 'opaque-build');
-  const manifest = { version: 1, repository: target.repository, sourceCommit: sha, prNumber: 1528, profile: 'gaming-guide',
+  const manifest = { version: 1, repository: target.repository, sourceCommit: sha, prNumber: 1528, profile,
     workflowRunId: '1234', workflowRunAttempt: 1, controllerRevision: trustedSha, treeSha, compiledSha256,
     files: { 'source.tar': hash('opaque-source'), 'build.tar': hash('opaque-build') } };
   const raw = JSON.stringify(manifest) + '\n'; writeFileSync(path.join(artifactDirectory, 'candidate-attestation.json'), raw);
@@ -59,7 +60,7 @@ function fixture(t) {
   const environment = { WORKFLOW_RUN_ID: '1234', WORKFLOW_RUN_ATTEMPT: '1', CONTROLLER_REVISION: trustedSha, GITHUB_ACTOR: 'maintainer',
     GITHUB_TOKEN: 'fixture-github-token', RAILWAY_LIVE_VALIDATION_TOKEN: 'fixture-railway-token', LIVE_VALIDATION_ARTIFACT_DIRECTORY: artifactDirectory };
   const argv = ['--target-file', targetFile, '--artifact-attestation-file', artifactFile, '--pr-number', '1528', '--commit-sha', sha,
-    '--profile', 'gaming-guide', '--evidence-dir', path.join(directory, 'evidence')];
+    '--profile', profile, '--evidence-dir', path.join(directory, 'evidence')];
   return { directory, target, binding, artifactDirectory, targetFile, artifactFile, argv, environment };
 }
 function ghFixture(f, options = {}) {
@@ -99,14 +100,19 @@ function observation(positive) {
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 
-async function exerciseController(t, { metadataStatus = 200, generationStatus = 200, withholdAnswer = false } = {}) {
-  const f = fixture(t); let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
+async function exerciseController(t, { metadataStatus = 200, generationStatus = 200, withholdAnswer = false, paired = false } = {}) {
+  const profile = paired ? 'gaming-gta-iv-dual' : 'gaming-guide';
+  const profiles = readLiveValidationProfiles(ROOT, profile);
+  const f = fixture(t, profile);
+  let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
   let application; const routes = []; const providerUrls = [];
   // Controlled adapter/provider fixtures exercise transport and retention only;
   // this prose is not an acquired publisher claim or a live model answer.
-  const answer = '1. Follow the documented system-colonisation starting procedure [1].';
-  const contextFingerprint = '9'.repeat(64); let expectedPrivateAnswer;
-  assert.equal(profiles.profiles[0].input.query.game, 'Elite Dangerous');
+  const answer = paired ? 'Drive Roman to his apartment [1].' : '1. Follow the documented system-colonisation starting procedure [1].';
+  const conversationalAnswer = "Get into Roman's car and follow the GPS to his apartment.";
+  const contextFingerprint = '9'.repeat(64); let expectedPrivateAnswer; let expectedConversationalAnswer;
+  let providerCreations = 0;
+  assert.equal(profiles.profiles[0].input.query.game, paired ? 'Grand Theft Auto IV' : 'Elite Dangerous');
   assert.equal(profiles.profiles[0].expected.semanticGap, 'NONE');
   assert.equal(profiles.profiles[0].input.clarificationReplies, undefined);
   const railway = {
@@ -118,24 +124,53 @@ async function exerciseController(t, { metadataStatus = 200, generationStatus = 
       application = createValidationRuntimeApplication({ target, identity: identity(target), profiles,
         buildManifest: identity(target).buildManifest, testToken: token, apiKey: 'sk-offline-test-synthetic-validation-credential',
         resolveResponseModelIdentity: async () => (response, expected) => response.model === expected ? expected : undefined,
-        createProvider: options => createLiveValidationProvider({ ...options, fetchImplementation: async (url, init) => {
-          providerCalls++; providerUrls.push(url);
-          assert.match(init.headers.authorization, /^Bearer sk-/u); assert.equal(init.redirect, 'error');
-          if (init.method === 'GET') return metadataStatus === 200
-            ? Response.json({ id: target.models[1].id, object: 'model' })
-            : Response.json({ error: { message: 'private upstream fixture body' } }, { status: metadataStatus });
-          if (generationStatus !== 200) {
-            return Response.json({ error: { message: 'private upstream generation failure' } }, { status: generationStatus });
-          }
-          const body = JSON.parse(init.body);
-          return new Response(JSON.stringify({ id: 'offline-response', object: 'response', model: body.model, status: 'completed', output: [],
-            usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
-        } }),
+        createProvider: options => {
+          providerCreations++;
+          return createLiveValidationProvider({ ...options, fetchImplementation: async (url, init) => {
+            providerCalls++; providerUrls.push(url);
+            assert.match(init.headers.authorization, /^Bearer sk-/u); assert.equal(init.redirect, 'error');
+            if (init.method === 'GET') return metadataStatus === 200
+              ? Response.json({ id: target.models[1].id, object: 'model' })
+              : Response.json({ error: { message: 'private upstream fixture body' } }, { status: metadataStatus });
+            if (generationStatus !== 200) {
+              return Response.json({ error: { message: 'private upstream generation failure' } }, { status: generationStatus });
+            }
+            const body = JSON.parse(init.body);
+            return new Response(JSON.stringify({ id: 'offline-response', object: 'response', model: body.model, status: 'completed', output: [],
+              usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+          } });
+        },
         createAdapter: async ({ provider }) => {
           const client = new OpenAI({ apiKey: 'validation-provider-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: provider.fetch });
           return { validateInput: input => ({ ok: true, input }), getLastObservation: () => structuredClone(lastObservation),
-            execute: async (input, hooks) => {
+            execute: async (input, hooks, answerGrounding) => {
               const entry = profiles.profiles.find(item => item.input.query.idempotencyKey === input.query.idempotencyKey);
+              if (entry.id === 'gaming-guide-conversational') {
+                assert.equal(answerGrounding, 'model_knowledge');
+                assert.deepEqual(input.candidateUrls, []);
+                assert.equal(input.query.question, 'I just got off the boat in GTA IV. What now?');
+                lastObservation = { ...observation(true), candidates: [],
+                  coverage: { satisfied: false, assessmentStatus: 'not_assessed', missingCount: 0 },
+                  selectedCandidateCount: 0, selectedEvidenceCount: 0 };
+                for (const stage of ['acquisition', 'selection', 'intake', 'reasoning', 'final']) {
+                  lastObservation.stages[stage] = { status: 'not_run', elapsedMs: null };
+                }
+                try {
+                  await client.responses.create({ model: target.models[0].id, input: 'Offline conversational fixture.', max_output_tokens: 100 });
+                } catch {
+                  lastObservation.outcome = 'unavailable';
+                  lastObservation.presentation = null;
+                  return { accepted: false };
+                }
+                expectedConversationalAnswer = { version: 2, policyVersion: PRESENTATION.policyVersion, response: conversationalAnswer,
+                  subjectHash: validationHash(conversationalAnswer), contextFingerprint, sources: [] };
+                return { accepted: true, answerGrounding, presentation: PRESENTATION, privateAnswer: expectedConversationalAnswer,
+                  result: { ok: true, route: 'gaming', mode: 'guide', data: { response: conversationalAnswer, sources: [],
+                    grounding: { groundingStatus: 'unavailable', groundedInSuppliedEvidence: false, requestedSourceCount: 0,
+                      fetchedSourceCount: 0, fetchedSuppliedSourceCount: 0, usableSourceCount: 0, citableSourceCount: 0,
+                      selectedChunkCount: 0, suppliedEvidenceSourceCount: 0 } } } };
+              }
+              assert.equal(answerGrounding, undefined);
               const positive = entry.id === 'gaming-guide-positive'; hooks.onSourceAcquisition('passed');
               hooks.onSourceValidation(positive ? 'passed' : 'rejected'); lastObservation = observation(positive);
               if (!positive) return { accepted: false, failureCode: 'INCOMPATIBLE_SOURCE' };
@@ -148,7 +183,10 @@ async function exerciseController(t, { metadataStatus = 200, generationStatus = 
                 throw error;
               }
               try {
-                await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture.', max_output_tokens: 100 });
+                const stages = paired ? entry.expected.requiredModelStages : ['generation'];
+                for (const stage of stages) {
+                  await client.responses.create({ model: target.models[0].id, input: 'Offline grounded guide fixture ' + stage, max_output_tokens: 100 });
+                }
               } catch {
                 lastObservation = { ...lastObservation, outcome: 'unavailable', reason: 'GENERATION_UNAVAILABLE',
                   semanticGap: 'UNOBSERVED', presentation: null,
@@ -189,6 +227,53 @@ async function exerciseController(t, { metadataStatus = 200, generationStatus = 
     }
   });
   const modelUrl = 'https://api.openai.com/v1/models/' + f.target.models[1].id;
+  if (paired) {
+    assert.equal(providerCreations, 1);
+    assert.equal(routes.filter(route => route === '/runs').length, 1);
+    const [firstCase] = result.cases ?? result.observedCases;
+    assert.equal(firstCase.evidence.usage.limits.maxSpendMicroUsd, 2_000_000);
+    assert.equal(firstCase.evidence.usage.limits.maxRetries, 0);
+    assert.equal(result.actualUsage.auditCalls, 0);
+    assert.ok(result.actualUsage.reservedSpendMicroUsd <= 2_000_000);
+    assert.equal(stopped, true);
+    assert.equal(result.cleanup.runClosed, true);
+    const evidenceDirectory = path.join(f.directory, 'evidence');
+    if (generationStatus !== 200) {
+      assert.equal(result.status, 'FAILED');
+      assert.deepEqual(result.observedCases.map(item => item.caseId), ['gaming-guide-conversational']);
+      assert.equal(result.actualUsage.workflows, 1);
+      assert.equal(result.actualUsage.generationCalls, 1);
+      assert.deepEqual(providerUrls, ['https://api.openai.com/v1/responses']);
+      for (const file of ['conversational-answer.private.json', 'accepted-answer.private.json']) {
+        assert.throws(() => readFileSync(path.join(evidenceDirectory, file)), { code: 'ENOENT' });
+      }
+      return;
+    }
+    assert.equal(result.status, 'PASS', result.code);
+    assert.deepEqual(result.cases.map(item => item.status), ['PASS', 'PASS']);
+    assert.deepEqual(result.cases.map(item => item.evidence.acceptanceProfile),
+      [LIVE_PREVIEW_CONVERSATIONAL_PROFILE, LIVE_PREVIEW_PRESENTATION_PROFILE]);
+    assert.deepEqual(result.cases.map(item => item.actualUsage.generationCalls), [1, 3]);
+    assert.equal(result.cases[0].evidence.result.sourceReferencesAbsent, true);
+    assert.equal(result.cases[1].evidence.result.citationsResolved, true);
+    assert.equal(result.actualUsage.workflows, 2);
+    assert.equal(result.actualUsage.generationCalls, 4);
+    assert.equal(result.actualUsage.metadataRequests, 1);
+    assert.equal(providerCalls, 5);
+    for (const [index, file, answer] of [
+      [0, 'conversational-answer.private.json', expectedConversationalAnswer],
+      [1, 'accepted-answer.private.json', expectedPrivateAnswer]
+    ]) {
+      const retained = JSON.parse(readFileSync(path.join(evidenceDirectory, file), 'utf8'));
+      assert.equal(retained.caseId, profiles.profiles[index].id);
+      assert.equal(retained.sourceCommit, sha);
+      assert.equal(retained.response, answer.response);
+      assert.deepEqual(retained.sources, answer.sources);
+      assert.equal(result.cases[index].answerArtifactSha256, validationHash(answer));
+      assert.equal(JSON.stringify(result).includes(answer.response), false);
+    }
+    return;
+  }
   if (metadataStatus === 404) {
     assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_FAILED');
     assert.equal(result.observedCases[0].observation.reason, 'GENERATION_UNAVAILABLE');
@@ -260,3 +345,9 @@ test('controller retains generation failure without publishing an answer or runn
   t => exerciseController(t, { generationStatus: 400 }));
 test('controller withholds incomplete generation without publishing an answer or running the negative profile',
   t => exerciseController(t, { withholdAnswer: true }));
+
+
+test('controller runs the no-source and grounded GTA IV cases under one budget and retains separate private answers',
+  t => exerciseController(t, { paired: true }));
+test('controller consumes a failed no-source attempt once and stops before the grounded GTA IV case',
+  t => exerciseController(t, { paired: true, generationStatus: 400 }));

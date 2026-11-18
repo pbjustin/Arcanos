@@ -232,6 +232,7 @@ test('CLI allows only reviewed profile names and keeps Elite Dangerous as the de
     '--evidence-dir', path.resolve('evidence'), '--pr-number', '1600'];
   assert.equal(parseLiveValidationControllerArguments(base).profile, 'gaming-guide');
   assert.equal(parseLiveValidationControllerArguments([...base, '--profile', 'gaming-gta-iv']).profile, 'gaming-gta-iv');
+  assert.equal(parseLiveValidationControllerArguments([...base, '--profile', 'gaming-gta-iv-dual']).profile, 'gaming-gta-iv-dual');
   for (const name of ['gta-iv', '../gta-iv-profiles.json', 'constructor', 'https://example.test/profiles.json'])
     assert.throws(() => parseLiveValidationControllerArguments([...base, '--profile', name]),
       { code: 'LIVE_VALIDATION_ARGUMENT_INVALID' });
