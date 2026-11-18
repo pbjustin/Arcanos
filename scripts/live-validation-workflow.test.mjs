@@ -58,7 +58,7 @@ test('manual paid admission uses default-branch trust and one Railway HTTPS vali
   const inputs = workflow.on.workflow_dispatch.inputs;
   assert.equal(inputs.pr_number.required, false);
   assert.equal(inputs.expected_sha.required, false);
-  assert.deepEqual(inputs.profile.options, ['gaming-guide', 'gaming-gta-iv']);
+  assert.deepEqual(inputs.profile.options, ['gaming-guide', 'gaming-gta-iv', 'gaming-gta-iv-dual']);
   assert.equal(inputs.profile.default, 'gaming-guide');
   assert.equal(inputs.paid_authorized.type, 'boolean');
   assert.equal(inputs.paid_authorized.required, true);
@@ -84,6 +84,7 @@ test('manual paid admission uses default-branch trust and one Railway HTTPS vali
 test('dispatch validation rejects shell-shaped inputs, unknown profiles and workflow reruns before checkout', () => {
   assert.equal(runInline(inputStep).status, 0);
   assert.equal(runInline(inputStep, { ACCEPTANCE_PROFILE: 'gaming-gta-iv' }).status, 0);
+  assert.equal(runInline(inputStep, { ACCEPTANCE_PROFILE: 'gaming-gta-iv-dual' }).status, 0);
   assert.equal(runInline(inputStep, { EXPECTED_SHA: '' }).status, 0);
   assert.equal(runInline(inputStep, { PR_NUMBER: '' }).status, 0);
   assert.equal(runInline(inputStep, { PR_NUMBER: '', EXPECTED_SHA: '' }).status, 1);
@@ -126,6 +127,19 @@ test('candidate profile preflight requires the selected profile at the reviewed 
     assert.equal(run(ready, 'gaming-gta-iv').status, 0);
     assert.equal(run(ready, 'gaming-guide').status, 0);
     assert.equal(run(ready, '../gta-iv-profiles.json').status, 1);
+    const missingPair = run(ready, 'gaming-gta-iv-dual');
+    assert.equal(missingPair.status, 1);
+    assert.equal(missingPair.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_PROFILE_UNAVAILABLE');
+    const dual = path.join(profileDirectory, 'gta-iv-dual-profiles.json');
+    writeFileSync(dual, readFileSync(gta));
+    const wrongFormat = commit();
+    const badPair = run(wrongFormat, 'gaming-gta-iv-dual');
+    assert.equal(badPair.status, 1);
+    assert.equal(badPair.stderr.trim(), 'LIVE_VALIDATION_CANDIDATE_PROFILE_UNAVAILABLE');
+    writeFileSync(dual, readFileSync(new URL('../examples/live-validation/gta-iv-dual-profiles.json', import.meta.url)));
+    const paired = commit();
+    assert.equal(run(paired, 'gaming-gta-iv-dual').status, 0);
+    assert.equal(run(paired, 'gaming-gta-iv').status, 0);
     assert.ok(offline.steps.indexOf(named(offline, 'Verify candidate checkout identity')) < offline.steps.indexOf(candidateProfile));
     assert.ok(offline.steps.indexOf(candidateProfile) < offline.steps.indexOf(named(offline, 'Install candidate dependencies without live credentials')));
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -422,8 +436,11 @@ test('trusted artifact binding rejects archives and manifests above their indivi
 test('trusted artifact binding admits only the exact selected named profile', () => {
   for (const [manifestProfile, requestedProfile, expectedStatus] of [
     ['gaming-gta-iv', 'gaming-gta-iv', 0],
+    ['gaming-gta-iv-dual', 'gaming-gta-iv-dual', 0],
     ['gaming-guide', 'gaming-gta-iv', 1],
     ['gaming-gta-iv', 'gaming-guide', 1],
+    ['gaming-gta-iv', 'gaming-gta-iv-dual', 1],
+    ['gaming-gta-iv-dual', 'gaming-gta-iv', 1],
     ['research', 'research', 1],
   ]) {
     const fixture = candidateFixture();

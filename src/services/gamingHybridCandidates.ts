@@ -29,6 +29,7 @@ import { assessGamingClearSource, assessGamingClearSourceIdentity, gamingClearSc
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import type { GamingFreshnessRequirement } from '@shared/gaming/gamingQuestionFreshnessPolicy.js';
 import { gamingPlatformEvidenceMatchesRequest } from '@shared/gaming/gamingPlatformIdentity.js';
 import { assessGamingStructuralUsability, selectGamingSourceEditionScopedEvidence, selectGamingGameScopedDocument } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
@@ -108,7 +109,7 @@ export interface GamingHybridAcceptedCandidate {
   assessmentBinding: string;
   /** Server snapshot captured before source assessment, never a caller hint. */
   authorityRestrictionCount?: number;
-  sourceContext: GamingStoredKnowledgeInput & { region?: string };
+  sourceContext: GamingStoredKnowledgeInput & { freshnessRequirement?: GamingFreshnessRequirement };
   sourceMetadataBinding: string;
   /** Server-created content-bound records retained for v2 recovery selection. */
   evidenceRecords?: GamingStoredEvidenceRecord[];
@@ -183,8 +184,8 @@ function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
 
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
 export async function evaluateGamingHybridCandidates(
-  submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
-    discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
+  submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[];
+    freshnessRequirement?: GamingFreshnessRequirement; discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number;
     /** Negative deduplication only; invoked by protected acquisition after hop admission. */
     onRequestUrl?: (url: string) => void;
@@ -347,7 +348,7 @@ export async function evaluateGamingHybridCandidates(
       if (input.discoveryType === 'currentness_verification' && !isReviewedOfficialCurrentnessSource(reviewedPolicy)) {
         reject('REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'); continue;
       }
-      let policy = classifyGamingQuestionFreshness({ prompt: input.prompt, mode: input.mode }) === 'live_status'
+      let policy = classifyGamingQuestionFreshness(input) === 'live_status'
         ? { ...reviewedPolicy, durableAllowed: false, autoStoreAllowed: false } : reviewedPolicy;
       updateGamingSourceEvaluation(evaluation, 'provenance', 'passed', 'PROVENANCE_ACQUIRED', {
         authority: policy.authority === 'official' ? 'official' : policy.authority === 'unreviewed' ? 'unknown' : 'reviewed_secondary'
@@ -587,7 +588,8 @@ export async function evaluateGamingHybridCandidates(
       updateGamingSourceEvaluation(evaluation, 'relevance', records.length ? 'passed' : 'not_applicable', 'GAMEPLAY_CONTRIBUTION_VERIFIED');
       updateGamingSourceEvaluation(evaluation, 'generation', 'not_run', 'GENERATION_NOT_EVALUATED');
       const sourceContext = { ...pickGamingPlayerContext(input), game: input.game, prompt: input.prompt, mode: input.mode,
-        requestedVersion: input.requestedVersion, region: input.region };
+        requestedVersion: input.requestedVersion, region: input.region,
+        ...(input.freshnessRequirement ? { freshnessRequirement: input.freshnessRequirement } : {}) };
       const artifact: GamingHybridAcceptedCandidate = { candidateId, actorScopeHash: actorHash(context.actorKey),
         ...(context.workflowId ? { workflowId: context.workflowId } : {}), contentHash,
         policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, expiresAt: now().getTime() + GAMING_HYBRID_CANDIDATE_LIMITS.artifactTtlMs,

@@ -91,6 +91,14 @@ The private `owner-skill-review-a2cd3cfb.json` binds that approval to the comple
 skill hash. Candidate bytes and generation-time pending review reports are
 preserved; content approval does not establish live or installed behavior.
 
+## Semantic assistance candidate
+
+The [proposed skill update](../../docs/gpt/arcanos-gaming-semantic-assistance.instructions.md)
+documents the new v2 opt-in, the retained grounded workflow, and the release
+order. The current composer and installed skill retain the released baseline.
+Compose any new private candidate separately from its approved exact bytes
+and review the resulting complete candidate hash before any installation.
+
 ## Package boundary
 
 No app ID or installable package is supplied yet. The future package has one

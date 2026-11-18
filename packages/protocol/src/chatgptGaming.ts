@@ -24,13 +24,13 @@ function resolveSchema(schema: JsonSchema, compactOutput = false): JsonSchema & 
   const result = { ...root, type: 'object' as const, ...(Object.keys(required).length ? { $defs: required } : {}) };
   // Annotation text repeats across tools. Retain the canonical contract's
   // documentation while bounding the catalog; validation keywords are unchanged.
-  // Preserve actionable input discovery, revision, consent and retry guidance.
-  const documentedInputFields = new Set(['idempotencyKey', 'discoveryType', 'expectedRevision', 'sourceTypeHint']);
+  // Tool descriptions and the canonical contract carry revision and discovery guidance.
+  // Retain the input operation-key rule next to the key.
   function compact(value: unknown, field?: string): unknown {
     if (Array.isArray(value)) return value.map(child => compact(child, field));
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'description'
-      || (!compactOutput && field !== undefined && documentedInputFields.has(field)))
+      || (!compactOutput && field === 'idempotencyKey'))
       .map(([key, child]) => [key, compact(child, key)]));
   }
   return compact(result) as JsonSchema & { type: 'object' };

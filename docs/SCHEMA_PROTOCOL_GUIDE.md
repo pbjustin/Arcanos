@@ -11,11 +11,10 @@ Its bundle stays in a dedicated subdirectory; the daemon's flat tool discovery
 continues to load only the existing input/output schema pairs.
 See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
 
-The sealed Gaming MCP preview pins the full released eight-tool catalog at
-65,104 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
-revision guidance, bounded additive frontend recovery fields and paired v2
-query clarification continuation fields; tool names,
-query/write OAuth scopes and consent checks retain their existing authority.
+The sealed Gaming MCP preview pins the exact eight-tool catalog at 65,406 JSON
+bytes and its SHA-256, including v2 revision, recovery and
+semantic-assistance fields. Tool names, query/write OAuth scopes and consent
+checks retain their existing authority.
 The complete catalog and JSON-RPC envelope fit the unchanged 65,536-byte served
 and verifier response caps. Catalog description, schema or scope drift still
 fails verification; the preview does not truncate schemas or prove production
@@ -43,6 +42,16 @@ V2 query clarification continuations pair optional `workflowId` and
 missing context under a new operation key. Both fields are rejected for v1.
 Clarification retains the original workflow, accepted artifacts and budgets;
 actor ownership, revision, expiry, immutable scope and idempotency remain checked.
+The optional v2 `semanticAssistance` object is closed and versioned separately as
+`gaming-semantic-v1`. It carries up to 400 characters of interpretation, an
+optional evidence requirement and one optional HTTP(S) source URL up to 2,048
+characters when the player supplied the link in conversation. The backend
+independently validates the required source. Omission of the assistance object
+preserves the grounded default.
+It cannot weaken grounding or authorize acquisition and storage. V2 model
+answers carry an explicit `answer.grounding: model_knowledge` marker and no
+sources. The original question and unaltered hint object remain bound to
+clarification and idempotency where the workflow applies.
 It adds no command-envelope ID, ActionPlan shape, Python-owned protocol or
 schema-catalog family. Query, transient candidate validation, and consequential
 durable ingestion are separate operations. See [Gaming API](API.md#gaming-hybrid-knowledge-actions).

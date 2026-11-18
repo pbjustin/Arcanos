@@ -1,4 +1,4 @@
-import { createLiveValidationBudget } from './live-validation-budget.mjs';
+import { createLiveValidationBudget, LIVE_VALIDATION_CONVERSATIONAL_CASE } from './live-validation-budget.mjs';
 import { createLiveValidationProviderTransport, LIVE_VALIDATION_MODEL_URL_PREFIX,
   LIVE_VALIDATION_RESPONSES_URL, validateLiveValidationProviderRequest } from './live-validation-egress.mjs';
 
@@ -33,7 +33,7 @@ function safeCode(error) {
 /** Direct SDK fetch with one non-resettable paid budget, ordinary public TLS, and no broker. */
 export function createLiveValidationProvider({ target, identity, apiKey, now = Date.now,
   fetchImplementation = globalThis.fetch, getRemainingMs = () => null, observation = () => ({ moduleId: 'gaming', stage: 'generation' }),
-  expiresAtMs, responseModelIdentity, generationOnly = false } = {}) {
+  expiresAtMs, responseModelIdentity, generationOnly = false, pairedGtaIv = false } = {}) {
   requireProvider(typeof apiKey === 'string' && apiKey.length >= 32 && apiKey.length <= 4_096
     && /^sk-[A-Za-z0-9_-]+$/u.test(apiKey)
     && !/^sk-(?:test|mock|example|placeholder|change[-_]?me|replace)(?:[-_]|$)/iu.test(apiKey),
@@ -58,10 +58,17 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
     if (state.closed && !closed) close(); return { ...state, stages: structuredClone(stages) };
   }
   function beginWorkflow(caseId) {
+    requireProvider(caseId !== LIVE_VALIDATION_CONVERSATIONAL_CASE || generationOnly === true,
+      'LIVE_VALIDATION_CONVERSATIONAL_GENERATION_ONLY_REQUIRED');
     budget.beginWorkflow(caseId);
-    workflow = { caseId, generationCompleted: 0, auditCompleted: 0, lastContentStage: null };
+    const generationLimit = caseId === LIVE_VALIDATION_CONVERSATIONAL_CASE ? 1
+      : pairedGtaIv && caseId === 'gaming-guide-positive' ? 3 : undefined;
+    workflow = { caseId, generationLimit, generationCompleted: 0, auditCompleted: 0, lastContentStage: null };
   }
   function endWorkflow() {
+    if (workflow?.generationLimit !== undefined && workflow.generationCompleted !== workflow.generationLimit) {
+      close(); throw new LiveValidationProviderError('LIVE_VALIDATION_GENERATION_REQUIRED');
+    }
     if (workflow?.caseId === 'gaming-guide-positive') {
       if (generationOnly && workflow.generationCompleted === 0) {
         close(); throw new LiveValidationProviderError('LIVE_VALIDATION_GENERATION_REQUIRED');
@@ -140,9 +147,13 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
       stage ??= observed?.stage;
       requireProvider(!generationOnly || stage !== 'answer_audit', 'LIVE_VALIDATION_AUDIT_FORBIDDEN');
       if (stage !== 'metadata') {
-        requireProvider(workflow?.caseId === 'gaming-guide-positive' || workflow?.caseId === 'gaming-guide-negative',
+        requireProvider(workflow?.caseId === 'gaming-guide-positive' || workflow?.caseId === LIVE_VALIDATION_CONVERSATIONAL_CASE,
           'LIVE_VALIDATION_WORKFLOW_REQUIRED');
         requireProvider(stage !== 'generation' || workflow.lastContentStage !== 'answer_audit', 'LIVE_VALIDATION_REGENERATION_FORBIDDEN');
+        if (pairedGtaIv && workflow.caseId === 'gaming-guide-positive' && stage === 'generation') {
+          // The grounded control has one intake, reasoning and final call.
+          requireProvider(workflow.generationCompleted < workflow.generationLimit, 'LIVE_VALIDATION_GROUNDED_RETRY_FORBIDDEN');
+        }
         requireProvider(stage !== 'answer_audit' || workflow.generationCompleted > 0, 'LIVE_VALIDATION_AUDIT_ORDER_INVALID');
       }
       const content = stage === 'metadata' ? { inputTokens: 0, outputTokens: 0 } : contentRequest(request.body);
@@ -200,6 +211,9 @@ export function createLiveValidationProvider({ target, identity, apiKey, now = D
         inputTokens = body.usage.input_tokens; outputTokens = body.usage.output_tokens;
       }
       budget.settle(reservation, { model: request.model, inputTokens, outputTokens });
+      if (stage === 'generation' && workflow.generationLimit !== undefined) {
+        requireProvider(body.status === 'completed', 'LIVE_VALIDATION_GENERATION_INCOMPLETE');
+      }
       if (stage === 'generation') workflow.generationCompleted++;
       if (stage === 'answer_audit') workflow.auditCompleted++;
       return Response.json(stage === 'metadata' ? { id: request.model, object: 'model' } : body);

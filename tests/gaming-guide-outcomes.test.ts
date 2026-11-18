@@ -21,6 +21,7 @@ describe('Gaming clarification query continuation contracts', () => {
   const openapi = JSON.parse(readFileSync('contracts/arcanos_gaming.openapi.v1.json', 'utf8'));
   const ajv = new Ajv2020({ strict: true });
   ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
+  ajv.addFormat('uri', { type: 'string', validate: value => URL.canParse(value) });
   const validateAction = ajv.compile(openapi.components.schemas.GamingHybridQueryRequest);
   const valid = (input: unknown) => [gamingHybridQuerySchema.safeParse(input).success,
     isGamingMcpInput('arcanos_gaming_hybrid_query', input), validateAction(input)];
@@ -32,6 +33,15 @@ describe('Gaming clarification query continuation contracts', () => {
 
   it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'])('preserves initial %s queries without continuation fields', contractVersion => {
     expect(valid({ ...query, contractVersion })).toEqual([true, true, true]);
+  });
+
+  it.each([
+    ['https://guides.example.org/samurai', true],
+    ['https://[invalid-host]/samurai', false],
+    ['/samurai', false]
+  ] as const)('agrees on the required source URL format for %s', (requiredSourceUrl, accepted) => {
+    const semanticAssistance = { version: 'gaming-semantic-v1', requiredSourceUrl };
+    expect(valid({ ...query, semanticAssistance })).toEqual([accepted, accepted, accepted]);
   });
 
   it.each([{ workflowId }, { expectedRevision: 1 }])('requires continuation identifiers together: %j', continuation => {

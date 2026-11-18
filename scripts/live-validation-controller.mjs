@@ -3,13 +3,14 @@ import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstat
   writeFileSync, fsyncSync, realpathSync, renameSync, linkSync, unlinkSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractLivePreviewNumericCitations, sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
-  sanitizeLiveValidationAuditRejection, LIVE_PREVIEW_PRESENTATION_PROFILE, LIVE_PREVIEW_PRESENTATION_POLICY,
+import { extractLivePreviewNumericCitations, livePreviewSourceReferencesAbsent, sanitizeLivePreviewEvidence, sanitizeLiveValidationAuditProviderDiagnostic,
+  sanitizeLiveValidationAuditRejection, LIVE_PREVIEW_CONVERSATIONAL_PROFILE, LIVE_PREVIEW_PRESENTATION_PROFILE, LIVE_PREVIEW_PRESENTATION_POLICY,
   sanitizeLivePreviewPresentation, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
   LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
 import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
-import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
+import { isLiveValidationProfileSuite, isPairedLiveValidationSuite, LIVE_VALIDATION_CONVERSATIONAL_CASE_ID,
+  LIVE_VALIDATION_PAIRED_PROFILE, LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
 import { LIVE_VALIDATION_METADATA_DIAGNOSTIC_CODES, LIVE_VALIDATION_METADATA_RESERVED_CODES } from './live-validation-provider.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -18,7 +19,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[0-9a-f]{40}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const PROFILE_IDS = ['gaming-guide-positive', 'gaming-guide-negative'];
 const MODEL_STAGES = ['intake', 'reasoning', 'final'];
 const ANSWER_AUDIT_REASON_CODES = ['AUDIT_INPUT_UNAVAILABLE', 'AUDIT_BUDGET_EXHAUSTED',
   'AUDIT_PROVIDER_INCOMPLETE', 'AUDIT_MALFORMED', 'AUDIT_TIMEOUT', 'AUDIT_PROVIDER_ERROR'];
@@ -26,6 +26,15 @@ const ANSWER_AUDIT_PROVIDER_CODES = ['LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_V
   'LIVE_VALIDATION_RUN_CLOSED', 'LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH', 'LIVE_VALIDATION_PROVIDER_FAILED',
   'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID', 'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT', 'LIVE_VALIDATION_USAGE_INVALID',
   'LIVE_VALIDATION_BUDGET_EXPIRED'];
+const RUNTIME_ADMISSION_CODES = new Set([
+  'LIVE_VALIDATION_IDENTITY_UNAUTHORIZED', 'LIVE_VALIDATION_RUN_ALREADY_CLAIMED_OR_NOT_READY',
+  'LIVE_VALIDATION_REQUEST_INVALID', 'LIVE_VALIDATION_REQUEST_LIMIT', 'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH',
+  'LIVE_VALIDATION_RUN_DEADLINE_INVALID', 'LIVE_VALIDATION_OPENAI_KEY_REQUIRED', 'LIVE_VALIDATION_RUN_EXPIRED',
+  'LIVE_VALIDATION_CREDENTIAL_INVALID', 'LIVE_VALIDATION_DEPLOYMENT_MISMATCH', 'LIVE_VALIDATION_MODELS_INVALID',
+  'LIVE_VALIDATION_BUDGET_CLOCK_INVALID', 'LIVE_VALIDATION_BUDGET_EXPIRED', 'LIVE_VALIDATION_BUDGET_LIMITS_INVALID',
+  'LIVE_VALIDATION_BUDGET_MODELS_INVALID', 'LIVE_VALIDATION_REQUEST_FAILED'
+]);
+const MAX_RUNTIME_ADMISSION_ERROR_BYTES = 1_024;
 const MAX_ANSWER_AUDIT_TIMEOUT_MS = 12_000;
 export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'lint', 'build', 'railway', 'workflow',
   'secret-scan', 'service-auth', 'egress', 'exact-sha', 'gaming']);
@@ -62,20 +71,24 @@ export function validateLiveValidationPrivateAnswer(value, { evidence, observati
   const code = 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID';
   const keys = ['version', 'response', 'subjectHash', 'contextFingerprint', 'sources'];
   const presented = value?.version === 2;
+  const conversational = evidence?.acceptanceProfile === LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
   requireController(exact(value, presented ? [...keys, 'policyVersion'] : keys)
     && (presented || value.version === 1) && typeof value.response === 'string' && value.response.trim().length > 0
     && value.response.length <= 65_536 && HASH.test(value.subjectHash ?? '') && HASH.test(value.contextFingerprint ?? '')
     && canonicalHash(value.response) === value.subjectHash && !publicEvidenceContainsSession(value, secrets)
-    && evidence?.result?.acceptedAnswer === true && evidence.result.citationsResolved === true
-    && observation?.coverage?.satisfied === true
+    && evidence?.result?.acceptedAnswer === true
+    && (conversational ? presented && evidence.result.answerGrounding === 'model_knowledge'
+      && evidence.result.sourceReferencesAbsent === true && livePreviewSourceReferencesAbsent(value.response)
+      && observation?.selectedEvidenceCount === 0 && observation.coverage?.satisfied === false
+      : evidence.result.citationsResolved === true && observation?.coverage?.satisfied === true)
     && (presented ? value.policyVersion === LIVE_PREVIEW_PRESENTATION_POLICY
-      && evidence.schemaVersion === 2 && evidence.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
+      && evidence.schemaVersion === 2 && (conversational || evidence.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE)
       && observation.schemaVersion === 2 && sanitizeLivePreviewPresentation(evidence.presentation) !== null
       && sanitizeLivePreviewPresentation(observation.presentation) !== null
       : evidence.schemaVersion === 1 && observation.schemaVersion === 1
         && evidence.audit?.assessmentStatus === 'completed' && evidence.audit.decision === 'accept' && evidence.audit.boundToFinalAnswer === true
         && observation.audit?.assessmentStatus === 'completed' && observation.audit.decision === 'accept' && observation.audit.boundToFinalAnswer === true)
-    && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.length <= 8
+    && Array.isArray(value.sources) && (conversational ? value.sources.length === 0 : value.sources.length > 0 && value.sources.length <= 8)
     && value.sources.length === evidence.result.sources.length, code);
   for (const [index, source] of value.sources.entries()) {
     requireController(exact(source, ['index', 'url']) && source.index === index + 1
@@ -87,6 +100,7 @@ export function validateLiveValidationPrivateAnswer(value, { evidence, observati
     requireController(evidence.result.sources.some(accepted => accepted.index === source.index && accepted.usable === true
       && accepted.documentUrlSha256 === digest(url.toString())), code);
   }
+  if (conversational) return structuredClone(value);
   const references = extractLivePreviewNumericCitations(value.response);
   requireController(references.length > 0 && references.length <= 128
     && references.every(index => value.sources.some(source => source.index === index))
@@ -517,12 +531,34 @@ function assertReady(value, target, role, commitSha, deploymentId, artifact) {
     && value.readiness?.providerCallsEnabled === false && value.readiness.modelCredentialBound === true
     && value.readiness.durableWritesEnabled === false,
   'LIVE_VALIDATION_PRIVATE_IDENTITY_MISMATCH');
+  const runtimeTimeMs = value.readiness.runtimeTimeMs;
+  requireController(runtimeTimeMs === undefined || integer(runtimeTimeMs, 1, Number.MAX_SAFE_INTEGER - target.limits.durationMs),
+    'LIVE_VALIDATION_RUNTIME_CLOCK_INVALID');
   const manifest = value.buildManifest;
   requireController(exact(manifest, ['version', 'repository', 'sourceCommit', 'role', 'treeSha', 'compiledSha256'])
     && manifest.version === 1 && manifest.repository === target.repository && manifest.sourceCommit === commitSha && manifest.role === role
     && manifest.treeSha === artifact.treeSha && manifest.compiledSha256 === artifact.compiledSha256
     && canonicalHash(manifest) === value.buildManifestSha256, 'LIVE_VALIDATION_BUILD_MANIFEST_MISMATCH');
   return identityFields(value);
+}
+async function readRuntimeAdmissionCode(response) {
+  if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return undefined;
+  try {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body ?? []) {
+      size += chunk.byteLength;
+      if (size > MAX_RUNTIME_ADMISSION_ERROR_BYTES) return undefined;
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (exact(body, ['error']) && exact(body.error, ['code']) && RUNTIME_ADMISSION_CODES.has(body.error.code)) {
+      return body.error.code;
+    }
+  } catch {
+    // The status is still retained when the origin has no usable error code.
+  }
+  return undefined;
 }
 /** Service credentials only enter the approved managed HTTPS origin; never log response errors. */
 export function createLiveValidationServiceClient({ origin, token, fetchImplementation = globalThis.fetch }) {
@@ -540,13 +576,22 @@ export function createLiveValidationServiceClient({ origin, token, fetchImplemen
     const response = await fetchImplementation(new URL(route, origin), { method: options.method ?? 'GET',
       headers: { ...options.headers, authorization: 'Bearer ' + token, ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }), signal, redirect: 'error' });
+    if (route === '/runs' && options.method === 'POST' && [401, 403].includes(response.status)) {
+      const runtimeCode = await readRuntimeAdmissionCode(response);
+      return { status: response.status, body: null, ...(runtimeCode ? { runtimeCode } : {}) };
+    }
     return { status: response.status, body: await boundedJson(response, 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED') };
   } });
 }
 async function serviceJson(client, route, options = {}) {
   const result = await client.requestJSON(route, { timeoutMs: CONTROL_TIMEOUT_MS, ...options });
-  requireController(result.status === 200 && record(result.body), 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
-  return result.body;
+  if (result.status === 200 && record(result.body)) return result.body;
+  const error = new LiveValidationControllerError('LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
+  if (route === '/runs' && [401, 403].includes(result.status)) {
+    error.admissionFailure = { httpStatus: result.status,
+      ...(RUNTIME_ADMISSION_CODES.has(result.runtimeCode) ? { code: result.runtimeCode } : {}) };
+  }
+  throw error;
 }
 function authHeaders(_run, runtime) {
   return { 'x-arcanos-source-commit': runtime.sourceCommit, 'x-arcanos-deployment-id': runtime.deploymentId };
@@ -638,14 +683,22 @@ function assertProfileRequirements(expected) {
     && integer(expected.clarification.completedCount, 1, 8)
     && integer(expected.clarification.postAcquisitionCount, 0, expected.clarification.completedCount), 'LIVE_VALIDATION_PROFILE_INVALID');
 }
-function assertProfileObservation(value, expected) {
+function assertProfileObservation(value, expected, conversational) {
   requireController(value?.schemaVersion === 2 && value.outcome === expected.outcome && value.semanticGap === expected.semanticGap,
     'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
-  if (expected.outcome === 'accepted') requireController(value.coverage.satisfied && value.selectedEvidenceCount > 0
-    && value.presentation?.boundToFinalAnswer === true,
-  'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
-  else requireController(value.presentation === null, 'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   const completed = stage => value.stages[stage]?.status === 'passed' && value.stages[stage].elapsedMs !== null;
+  if (conversational) {
+    requireController(value.presentation?.boundToFinalAnswer === true && !value.coverage.satisfied
+      && value.coverage.assessmentStatus === 'not_assessed' && value.selectedEvidenceCount === 0
+      && value.selectedCandidateCount === 0 && value.candidates.length === 0 && value.clarification === undefined,
+    'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
+    requireController(['acquisition', 'selection', ...MODEL_STAGES].every(stage => value.stages[stage].status === 'not_run')
+      && ['generation', 'response'].every(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+    return;
+  }
+  if (expected.outcome === 'accepted') requireController(value.coverage.satisfied && value.selectedEvidenceCount > 0
+    && value.presentation?.boundToFinalAnswer === true, 'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
+  else requireController(value.presentation === null, 'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   if (expected.outcome === 'accepted') requireController(['acquisition', 'selection', 'generation', 'response'].every(completed)
     && MODEL_STAGES.some(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
   if (Object.hasOwn(expected, 'requiredModelStages')) {
@@ -863,10 +916,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     ? validateLiveValidationOperatorArtifact(binding, { args, git, raw: artifactRaw, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY })
     : validateLiveValidationArtifact(binding, { args, git, environment, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY });
   const profiles = (dependencies.readProfiles ?? readLiveValidationProfiles)(root, args.profile);
-  requireController(profiles.version === 2 && profiles.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
-    && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
-    && PROFILE_IDS.every((id, index) => profiles.profiles[index]?.id === id)
-    && profiles.profiles.every(entry => entry.moduleId === 'gaming' && entry.input?.query?.storagePolicy === 'transient_only'), 'LIVE_VALIDATION_PROFILE_INVALID');
+  requireController(isLiveValidationProfileSuite(profiles)
+    && isPairedLiveValidationSuite(profiles) === (args.profile === LIVE_VALIDATION_PAIRED_PROFILE), 'LIVE_VALIDATION_PROFILE_INVALID');
   profiles.profiles.forEach(entry => assertProfileRequirements(entry.expected));
   const profileHash = canonicalHash(profiles);
   const localGate = { targetHash: liveValidationTargetSha256(target), artifactAttestationSha256: artifact.attestationSha256,
@@ -907,17 +958,24 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     const observed = normalizeLiveValidationInventory(target, await railway.inventory(target));
     requireController(observed.instances[0].activeDeployments?.length === 1
       && observed.instances[0].activeDeployments[0].id === state.runtimeDeploymentId, 'LIVE_VALIDATION_ACTIVE_DEPLOYMENT_MISMATCH');
-    runtimeIdentity = assertReady(await runJson('/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId, artifact);
+    const ready = await runJson('/ready');
+    runtimeIdentity = assertReady(ready, target, 'runtime', args.commitSha, state.runtimeDeploymentId, artifact);
     const freshGate = await assertLiveValidationGitHubGate({ github: createGitHub(), args, artifact, environment, git });
     requireController(freshGate.baseSha === githubGate.baseSha, 'LIVE_VALIDATION_PR_BASE_MOVED');
     checkDeadline(); const paidStarted = now(); deadline = paidStarted + args.limits.durationMs;
+    // Use the authenticated runtime's clock for its deadline. Readiness and revalidation time
+    // count against that window, while the controller still caps its own elapsed run time.
+    const runtimeTimeMs = ready.readiness.runtimeTimeMs ?? paidStarted;
     plan = { runId: state.runId, prNumber: args.prNumber, commitSha: args.commitSha,
-      runtimeDeploymentId: state.runtimeDeploymentId, profileHash, expiresAtMs: deadline, paidAuthorized: true };
+      runtimeDeploymentId: state.runtimeDeploymentId, profileHash,
+      expiresAtMs: runtimeTimeMs + args.limits.durationMs, paidAuthorized: true };
     state.runStarted = true; writeState(state); // Cleanup covers a partially delivered activation.
     const admitted = await runJson('/runs', { method: 'POST', body: plan });
     requireController(admitted.admitted === true && admitted.runId === state.runId, 'LIVE_VALIDATION_RUNTIME_ADMISSION_FAILED');
     let priorUsage = sanitizeLiveValidationUsage(await runJson('/usage'), { plan, target }); actualUsage = priorUsage;
     for (const entry of profiles.profiles) {
+      const conversational = entry.caseId === LIVE_VALIDATION_CONVERSATIONAL_CASE_ID;
+      const evidenceProfile = conversational ? LIVE_PREVIEW_CONVERSATIONAL_PROFILE : LIVE_PREVIEW_PRESENTATION_PROFILE;
       const response = await runJson('/acceptance', { method: 'POST', body: { runId: state.runId, caseId: entry.id, input: entry.input },
         headers: authHeaders(plan, runtimeIdentity), signal: dependencies.signal, timeoutMs: LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS });
       const observedCase = { caseId: entry.id, status: 'FAILED', runtimeClaimedPass: response.profilePassed === true }; cases.push(observedCase);
@@ -927,23 +985,27 @@ export async function runLiveValidationController(argv, dependencies = {}) {
         sourceCommit: args.commitSha, approvedSourceCommit: args.commitSha, deploymentId: state.runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' });
       requireController(response.caseId === entry.id && response.profilePassed === true && response.productionChanged === false
         && response.durableWrites === 0 && canonicalHash(identityFields(response.identity)) === canonicalHash(runtimeIdentity), 'LIVE_VALIDATION_PROFILE_FAILED');
-      requireController(observedCase.evidence?.acceptanceProfile === LIVE_PREVIEW_PRESENTATION_PROFILE
+      requireController(observedCase.evidence?.acceptanceProfile === evidenceProfile
         && observedCase.evidence.caseId === entry.caseId && observedCase.verification?.status === 'PASS', 'LIVE_VALIDATION_PROFILE_EVIDENCE_FAILED');
-      if (entry.expected.outcome === 'accepted') {
+      if (!conversational && entry.expected.outcome === 'accepted') {
         const approvedSources = entry.input.candidateUrls.map(raw => { const url = new URL(raw); url.search = ''; url.hash = ''; return digest(url.toString()); });
         requireController(approvedSources.length > 0 && observedCase.evidence.result.sources.some(source => source.usable === true
           && approvedSources.includes(source.documentUrlSha256)), 'LIVE_VALIDATION_SUPPLIED_SOURCE_BINDING_FAILED');
       }
-      assertProfileObservation(observedCase.observation, entry.expected);
+      assertProfileObservation(observedCase.observation, entry.expected, conversational);
       const usage = sanitizeLiveValidationUsage(await runJson('/usage'), { plan, target });
       const providerCalls = usage.providerCalls - priorUsage.providerCalls; const generationCalls = usage.generationCalls - priorUsage.generationCalls;
       const auditCalls = usage.auditCalls - priorUsage.auditCalls;
-      requireController(auditCalls === 0 && providerCalls === generationCalls
-        && (entry.expected.providerCalls === 0 ? generationCalls === 0 : generationCalls > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
+      const validCallCount = conversational ? generationCalls === 1
+        : isPairedLiveValidationSuite(profiles) ? generationCalls === MODEL_STAGES.length
+          : entry.expected.providerCalls === 0 ? generationCalls === 0 : generationCalls > 0;
+      requireController(auditCalls === 0 && providerCalls === generationCalls && validCallCount,
+        'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
       if (entry.expected.outcome === 'accepted') {
         const answer = validateLiveValidationPrivateAnswer(response.privateAnswer,
           { evidence: observedCase.evidence, observation: observedCase.observation, secrets: [testToken] });
-        protectedWrite(path.join(directory, 'accepted-answer.private.json'), { runId: state.runId,
+        const answerFile = conversational ? 'conversational-answer.private.json' : 'accepted-answer.private.json';
+        protectedWrite(path.join(directory, answerFile), { runId: state.runId,
           caseId: entry.id, sourceCommit: args.commitSha, runtimeIdentity, profileHash, ...answer });
         observedCase.answerArtifactSha256 = canonicalHash(answer);
       } else requireController(response.privateAnswer === undefined, 'LIVE_VALIDATION_PRIVATE_ANSWER_INVALID');
@@ -958,7 +1020,9 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     if (plan && state.runStarted) try { actualUsage = sanitizeLiveValidationUsage(await serviceJson(runtime, '/usage', { headers: authHeaders(plan, runtimeIdentity) }), { plan, target }); usageReadback = 'PASS'; } catch { /* Preserve original failure. */ }
     summary = { version: SUMMARY_VERSION, status: cases.length > 0 ? 'FAILED' : 'BLOCKED', code: safeCode(error), ...localGate,
       runId: state.runId, prNumber: args.prNumber, elapsedMs: Math.max(0, now() - started), observedCases: cases,
-      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}), usageReadback };
+      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}),
+      ...(error instanceof LiveValidationControllerError && error.admissionFailure ? { admissionFailure: error.admissionFailure } : {}),
+      usageReadback };
   } finally {
     cleanup = await cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState, now, sleep });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), cleanup);

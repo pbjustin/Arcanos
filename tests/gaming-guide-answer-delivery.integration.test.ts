@@ -400,6 +400,36 @@ function harness(backend: boolean) {
   return { query, complete, invoke, payload };
 }
 
+it('delivers a conversational reply through real Trinity orchestration with a synthetic SDK', async () => {
+  const game = 'Xenoblade Chronicles 2';
+  const question = 'How does combat work in Xenoblade Chronicles 2, and if I prefer to play defensively, where should I start? Keep it spoiler-free.';
+  const answer = 'Let your character auto-attack to charge Arts, then use Arts to charge Specials. For defensive play, start with a tank taking enemy attention and learn how to heal between big attacks.';
+  sdk.mockImplementation(async (payload: any) => ({
+    id: 'conversational-sdk', model: payload.model, status: 'completed', output: [], output_text: answer,
+    usage: { input_tokens: 90, output_tokens: 45, total_tokens: 135 }
+  }));
+  const app = harness(true);
+  const result = await app.query({ game, question, spoilerTolerance: 'full',
+    semanticAssistance: { version: 'gaming-semantic-v1' } });
+  expect(result).toMatchObject({ statusCode: 200, result: {
+    state: 'answer_ready', reason: 'CONVERSATIONAL_ANSWER', evidenceSelected: false,
+    answer: { response: answer, sources: [], grounding: 'model_knowledge' }
+  } });
+  expect(sdk).toHaveBeenCalledTimes(1);
+  const payload = sdk.mock.calls[0][0] as any;
+  const input = messageText(payload);
+  expect(input).toContain(question);
+  expect(input).toContain('Spoilers: none.');
+  expect(readFinalEvidence(input)).toEqual([]);
+  const trusted = messageText({ input: payload.input.filter((message: any) =>
+    message.role === 'system' || message.role === 'developer') });
+  expect(trusted).toContain('Gaming CLEAR Presentation policy');
+  expect(trusted).toContain('No external sources were selected or checked.');
+  expect(payload.tools ?? []).toEqual([]);
+  expect(searches).toEqual([]);
+  expect(acquired).toEqual([]);
+});
+
 describe.each([false])('natural guide request delivery, SYNTHETIC external effects, backend discovery %s', backend => {
   it.each(scenarios)('delivers natural question $id after source-bound selection, coverage, and Trinity presentation', async fixture => {
     scenario = fixture;

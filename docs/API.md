@@ -76,7 +76,7 @@ mapping is documented under [Private ChatGPT Gaming resource](#private-chatgpt-g
 
 | Method/path | Operation | Effect |
 | --- | --- | --- |
-| `POST /gpt-access/gaming/sources/hybrid/query` | `queryGamingHybridKnowledge` | Read active stored knowledge and return a grounded answer or explicit handoff. |
+| `POST /gpt-access/gaming/sources/hybrid/query` | `queryGamingHybridKnowledge` | Return a conversational answer, a grounded answer, or the next step in a grounded workflow. |
 | `POST /gpt-access/gaming/sources/hybrid/candidates` | `submitGamingHybridCandidates` | Validate at most three URLs in a caller-bound workflow; evidence stays transient. |
 | `POST /gpt-access/gaming/sources/hybrid/ingestions` | `ingestGamingHybridCandidates` | Explicit consequential write to queue approved candidate IDs under the configured storage/consent policy. |
 | `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` | `getGamingSourceIngestionStatus` | Existing authenticated, actor-owned lifecycle status; queued does not mean stored. |
@@ -88,6 +88,21 @@ logical key and URLs, optionally naming `discoveryType: gameplay_evidence` or
 `currentness_verification`; the original question and context remain server-owned
 within that workflow. Ingestion selects `candidateIds`, the matching storage
 policy, logical key and `confirmStore` for conversational approval when required.
+
+Queries using `gaming-hybrid-v2` can opt into server-selected routing with
+`semanticAssistance: { version: "gaming-semantic-v1" }`. The original
+question is still required. The optional `interpretation` supplies a short
+request-scoped reading of conversational intent or a referent. Optional
+`evidenceNeed` reinforces grounding as `required`, `specific_source`,
+`current_patch` or `live_status`. In a follow-up, `requiredSourceUrl` can carry
+one literal HTTP(S) link previously supplied by the player, even when the
+request also needs patch or live-status verification. Source links in the
+original question take precedence. A missing required link produces
+`SOURCE_LINK_REQUIRED`. ARCANOS independently acquires and validates the source.
+A conversational success has `answer.grounding: model_knowledge` and an empty
+`answer.sources`. Without the opt-in field, existing v2 queries keep their
+grounded workflow. V1 rejects semantic assistance. See the
+[proposed Gaming skill update](gpt/arcanos-gaming-semantic-assistance.instructions.md).
 
 V2 clarification continues through the same query endpoint with the returned
 `workflowId` and `expectedRevision` together, a new `idempotencyKey`, and the

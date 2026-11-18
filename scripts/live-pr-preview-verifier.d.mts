@@ -1,13 +1,15 @@
 export const LIVE_PREVIEW_MODE: 'live-backend-v1';
 export const LIVE_PREVIEW_ACCEPTANCE_PROFILE: 'grounded-audited-answer-v1';
 export const LIVE_PREVIEW_PRESENTATION_PROFILE: 'grounded-presented-answer-v2';
+export const LIVE_PREVIEW_CONVERSATIONAL_PROFILE: 'conversational-presented-answer-v1';
 export const LIVE_PREVIEW_PRESENTATION_POLICY: 'gaming-clear-presentation/v1';
 export interface LivePreviewPresentation {
   policyVersion: typeof LIVE_PREVIEW_PRESENTATION_POLICY;
   boundToFinalAnswer: true;
 }
 export type LivePreviewCaseId = 'useful_grounded_guide' | 'incompatible_source' | 'insufficient_evidence'
-  | 'acquisition_failure' | 'model_timeout' | 'audit_timeout' | 'exhausted_budget' | 'unauthorized_test_identity';
+  | 'acquisition_failure' | 'model_timeout' | 'audit_timeout' | 'exhausted_budget' | 'unauthorized_test_identity'
+  | 'useful_conversational_guide';
 export type LivePreviewStage = 'authorization' | 'budget' | 'source_acquisition' | 'source_validation'
   | 'generation' | 'answer_audit' | 'delivery';
 export type LivePreviewStageStatus = 'not_run' | 'passed' | 'rejected' | 'failed' | 'timed_out' | 'exhausted' | 'unobserved';
@@ -57,6 +59,8 @@ export interface LivePreviewNormalizedAnswer {
     grounding?: {
       groundingStatus: 'grounded' | 'insufficient_evidence' | 'unavailable';
       groundedInSuppliedEvidence: boolean;
+      requestedSourceCount?: number;
+      fetchedSourceCount?: number;
       fetchedSuppliedSourceCount: number;
       usableSourceCount: number;
       citableSourceCount: number;
@@ -71,9 +75,11 @@ export interface LivePreviewNormalizedAnswer {
 }
 export interface LivePreviewEvidenceInput {
   caseId: LivePreviewCaseId;
-  acceptanceProfile?: typeof LIVE_PREVIEW_ACCEPTANCE_PROFILE | typeof LIVE_PREVIEW_PRESENTATION_PROFILE;
+  acceptanceProfile?: typeof LIVE_PREVIEW_ACCEPTANCE_PROFILE | typeof LIVE_PREVIEW_PRESENTATION_PROFILE | typeof LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
   presentation?: LivePreviewPresentation | null;
-  /** Adapter-normalized grounded answer; module-specific public contracts remain outside this verifier. */
+  /** Adapter-observed grounding from the backend response, independent of the answer body. */
+  answerGrounding?: 'model_knowledge';
+  /** Adapter-normalized answer; module-specific public contracts remain outside this verifier. */
   result?: unknown;
   /** Backend-owned actual audit observation and binding to the delivered final answer. */
   audit?: { assessmentStatus: 'completed' | 'unavailable' | 'not_run';
@@ -95,11 +101,15 @@ interface LivePreviewEvidenceBase {
     incomplete: boolean;
     acceptedAnswer: boolean;
     grounding: { status: 'grounded' | 'insufficient_evidence' | 'unavailable' | 'unobserved';
-      groundedInSuppliedEvidence: boolean; fetchedSuppliedSourceCount: number | null; usableSourceCount: number | null;
-      citableSourceCount: number | null; selectedChunkCount: number | null; suppliedEvidenceSourceCount: number | null };
+      groundedInSuppliedEvidence: boolean | null; fetchedSuppliedSourceCount: number | null; usableSourceCount: number | null;
+      citableSourceCount: number | null; selectedChunkCount: number | null; suppliedEvidenceSourceCount: number | null;
+      requestedSourceCount?: number | null; fetchedSourceCount?: number | null };
     sources: Array<{ index: number; url: string | null; documentUrlSha256: string | null; usable: boolean }>;
     citationIndices: number[];
     citationsResolved: boolean;
+    answerGrounding?: 'model_knowledge' | null;
+    sourceCount?: number | null;
+    sourceReferencesAbsent?: boolean;
   };
   usage: { [Field in keyof Omit<LivePreviewUsage, 'limits'>]: number | null } & {
     limits: { [Field in keyof LivePreviewUsage['limits']]: number | null };
@@ -114,7 +124,7 @@ export type LivePreviewEvidence = LivePreviewEvidenceBase & ({
     decision: 'accept' | 'partial' | 'reject' | 'clarify' | 'unavailable' | 'unobserved'; boundToFinalAnswer: boolean };
 } | {
   schemaVersion: 2;
-  acceptanceProfile: typeof LIVE_PREVIEW_PRESENTATION_PROFILE;
+  acceptanceProfile: typeof LIVE_PREVIEW_PRESENTATION_PROFILE | typeof LIVE_PREVIEW_CONVERSATIONAL_PROFILE;
   presentation: LivePreviewPresentation | null;
 });
 export interface LivePreviewCaseVerification {
@@ -125,12 +135,13 @@ export interface LivePreviewCaseVerification {
   checks: Array<{ id: string; status: 'PASS' | 'FAIL' }>;
 }
 export const LIVE_PREVIEW_CASE_MANIFEST: ReadonlyArray<Readonly<{
-  caseId: LivePreviewCaseId;
+  caseId: Exclude<LivePreviewCaseId, 'useful_conversational_guide'>;
   failureCode: LivePreviewFailureCode | null;
   provider: 'none' | 'generation_only' | 'generation_and_audit';
   stages: Readonly<Record<LivePreviewStage, LivePreviewStageStatus>>;
 }>>;
 export function extractLivePreviewNumericCitations(answer: string): number[];
+export function livePreviewSourceReferencesAbsent(answer: unknown): boolean;
 export function createLivePreviewEvidence(identity: LivePreviewIdentity, input: LivePreviewEvidenceInput): LivePreviewEvidence;
 export function verifyLivePreviewEvidence(evidence: unknown, expectedIdentity: LivePreviewIdentity): LivePreviewCaseVerification;
 export function verifyLivePreviewSuite(evidence: unknown, expectedIdentity: LivePreviewIdentity): {

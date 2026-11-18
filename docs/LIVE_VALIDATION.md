@@ -422,6 +422,24 @@ provide controlled offline evidence; their example origin is not a deployed
 source host. Publisher reachability and usable coverage must be observed at
 execution. No local fixture or anonymous URL check proves live acceptance.
 
+Select [`gaming-gta-iv-dual`](../examples/live-validation/gta-iv-dual-profiles.json)
+to run two transient GTA IV cases in order under one run ID and one cumulative
+provider reservation cap of at most USD 2. The first asks `I just got off the boat
+in GTA IV. What now?` with no sources and no spoilers. It requires a complete
+model-knowledge answer from one generation attempt, with zero acquisition,
+selected evidence, citations or audits. The second is the same GTA4.TV grounded
+case from `gaming-gta-iv` and requires applicable acquired evidence, resolved
+citations and one call each for intake, reasoning and final generation. A failed case ends the run. Neither case has automatic provider
+retries. The public receipt records the two cases and shared usage. Exact answers
+are retained separately as `conversational-answer.private.json` and
+`accepted-answer.private.json` in the protected operator directory.
+
+For a draft whose default-branch controller does not yet support the paired
+profile, use the reviewed [operator bootstrap](#initial-pre-merge-cli-operation)
+with `--profile gaming-gta-iv-dual` after exact-head approval and successful
+required CI. The hosted path requires the supporting workflow on the default
+branch. This profile does not exercise the installed ChatGPT plugin.
+
 | Profile | Required observations |
 | --- | --- |
 | `gaming-guide-positive` | Elite Dangerous system-colonisation prerequisites and first steps, independently acquired from Frontier's public system-colonisation guide. The ordinary stable-mechanics question makes no current-patch assertion. Passing acceptance requires selected evidence and complete coverage, measured intake/reasoning/final stages, bound Gaming CLEAR Presentation v1 output, final `answer_ready`, resolved citations, no durable source writes and no player persistence. |
@@ -461,6 +479,16 @@ custom CA, certificate issuance, peer pin, signed supervisor session or private
 verifier tunnel to provision.
 
 ## Sanitized stage evidence
+
+The authenticated readiness response includes a runtime clock sample. The
+controller uses that clock to set the runtime deadline within the approved
+duration and independently enforces its own elapsed-time cap. The runtime still
+rejects expired or overlong deadlines before creating a provider guard. Older
+runtimes that omit the sample retain their original absolute-deadline behavior.
+
+When run admission returns HTTP 401 or 403, the controller records the status and
+any allowlisted runtime error code in `admissionFailure`. The receipt keeps
+credentials, raw response bodies and error messages out of evidence.
 
 Each live result distinguishes measured source acquisition, evidence selection,
 generation and response construction. Intake, reasoning

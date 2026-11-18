@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-16T01:06:21.964Z",
+  "generatedAt": "2026-11-18T02:54:02.031Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4595,6 +4595,9 @@
         },
         {
           "relativePath": "tests/gaming-composition-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-conversational-acceptance.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-cr-extraction-regressions.test.ts"

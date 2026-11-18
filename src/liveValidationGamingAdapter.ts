@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { getRequestAbortSignal } from '@arcanos/runtime';
 import { createGamingHybridWorkflow, type GamingHybridResult } from './services/gamingHybridKnowledge.js';
+import { checkGamingConversationalAnswerIntegrity } from './services/gamingAnswerIntegrity.js';
 import { evaluateGamingHybridCandidates } from './services/gamingHybridCandidates.js';
 import { resolveGamingDocument } from './services/gamingDocumentResolution.js';
 import type { GamingPipelineInput, GamingPipelineRuntime, GamingPreparedEvidence } from './services/gamingPipeline.js';
 import type { GamingSuccessEnvelope } from './services/gamingModes.js';
 import { gamingHybridQuerySchema, type GamingHybridQuery } from './shared/gaming/gamingHybridContract.js';
 import { validateGamingPlayerContextInput } from './shared/gaming/gamingPlayerContext.js';
-import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer, type GamingPresentedAnswerCarrier } from './shared/gaming/gamingPresentedAnswerBinding.js';
-import type { GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
+import { GAMING_PRESENTED_ANSWER, hasBoundGamingPresentedAnswer, type GamingPresentedAnswer, type GamingPresentedAnswerCarrier } from './shared/gaming/gamingPresentedAnswerBinding.js';
+import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from './shared/gaming/gamingPromptCore.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
   type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification } from './shared/gaming/liveValidationObservation.js';
 import type { LivePreviewPresentation, LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
@@ -21,6 +23,7 @@ export interface LivePrPreviewModuleObserver {
 export interface LivePrPreviewModuleResult {
   result?: unknown;
   accepted: boolean;
+  answerGrounding?: 'model_knowledge';
   presentation?: LivePreviewPresentation;
   failureCode?: LivePreviewFailureCode;
   /** Authenticated operator artifact only; excluded from public evidence and observation. */
@@ -30,7 +33,8 @@ export interface LivePrPreviewModuleResult {
 export interface LivePrPreviewModuleAdapter {
   moduleId: string;
   validateInput(value: unknown): { ok: true; input: unknown } | { ok: false };
-  execute(input: unknown, observer: LivePrPreviewModuleObserver): Promise<LivePrPreviewModuleResult>;
+  /** Execution mode comes from the runtime's reviewed case, outside the request payload. */
+  execute(input: unknown, observer: LivePrPreviewModuleObserver, answerGrounding?: 'model_knowledge'): Promise<LivePrPreviewModuleResult>;
 }
 
 const clarificationFields = ['platform', 'region', 'edition', 'currentArea', 'lastCompletedObjective', 'progressPoint',
@@ -43,7 +47,7 @@ export interface LiveValidationGamingInput {
 }
 export type LiveValidationGamingHooks = Pick<GamingPipelineRuntime,
   'onEvidenceAssessment'> & { onStage: (event: LiveValidationStageEvent) => void };
-export type LiveValidationGamingExecutor = (input: GamingPipelineInput, prepared: GamingPreparedEvidence,
+export type LiveValidationGamingExecutor = (input: GamingPipelineInput, prepared: GamingPreparedEvidence | undefined,
   hooks: LiveValidationGamingHooks) => Promise<GamingSuccessEnvelope>;
 export interface LiveValidationGamingAdapter extends LivePrPreviewModuleAdapter {
   getLastObservation(): LiveValidationObservation | undefined;
@@ -93,9 +97,15 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       return { ok: true, input: { query: parsed.data, candidateUrls: [...record.candidateUrls],
         ...(record.clarificationReplies !== undefined ? { clarificationReplies: replies } : {}) } as LiveValidationGamingInput };
     },
-    async execute(value, observer) {
+    async execute(value, observer, answerGrounding) {
       const input = value as LiveValidationGamingInput;
       lastObservation = undefined;
+      const conversational = answerGrounding === 'model_knowledge';
+      if (conversational) {
+        const assistance = input.query.contractVersion === 'gaming-hybrid-v2' ? input.query.semanticAssistance : undefined;
+        if (assistance?.version !== 'gaming-semantic-v1' || assistance.evidenceNeed || assistance.requiredSourceUrl
+          || input.candidateUrls.length || input.clarificationReplies?.length) return { accepted: false };
+      }
       const stages = emptyLiveValidationStages();
       const started = new Map<string, number>();
       const onStage = (event: LiveValidationStageEvent) => {
@@ -128,9 +138,13 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       const context = { actorKey: 'live-validation:' + scope, requestId: 'live-validation:' + scope,
         signal: getRequestAbortSignal(), canStore: false, canAutoStore: false };
       const workflow = createGamingHybridWorkflow({ now,
-        retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }),
+        retrieve: async () => {
+          if (conversational) throw new Error('LIVE_VALIDATION_CONVERSATIONAL_SOURCE_FORBIDDEN');
+          return { context: '', sources: [], evidence: [], sourceKnown: false };
+        },
         ingest: async () => { throw new Error('LIVE_VALIDATION_STORAGE_DENIED'); },
         evaluateCandidates: async (submission, actorContext) => {
+          if (conversational) throw new Error('LIVE_VALIDATION_CONVERSATIONAL_SOURCE_FORBIDDEN');
           clarification.acquisitionCount += 1;
           onStage({ stage: 'acquisition', phase: 'started' });
           try {
@@ -157,12 +171,15 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
           }
         },
         generate: async (params, prepared) => {
-          if (!prepared) throw new Error('LIVE_VALIDATION_PREPARED_EVIDENCE_REQUIRED');
+          if (conversational) {
+            if (prepared || !params.conversation) throw new Error('LIVE_VALIDATION_CONVERSATIONAL_REQUIRED');
+          } else if (!prepared) throw new Error('LIVE_VALIDATION_PREPARED_EVIDENCE_REQUIRED');
           onStage({ stage: 'generation', phase: 'started' });
           try {
             result = await execute(params, prepared, {
               onStage,
               onEvidenceAssessment: assessment => {
+                if (conversational) throw new Error('LIVE_VALIDATION_CONVERSATIONAL_SOURCE_FORBIDDEN');
                 evidenceAssessment = structuredClone(assessment);
                 observer.onSourceValidation(assessment.decision === 'accept' ? 'passed' : 'rejected');
                 if (assessment.decision !== 'accept') fail('INSUFFICIENT_EVIDENCE');
@@ -223,23 +240,45 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       clarification.revisionsAdvanced = clarification.completedCount > 0 && revisionsAdvanced;
       clarification.retainedEvidence = clarification.postAcquisitionCount > 0 && retainedEvidence;
       clarification.budgetsPreserved = clarification.postAcquisitionCount > 0 && budgetsPreserved;
-      const binding = (result?.data as GamingPresentedAnswerCarrier | undefined)?.[GAMING_PRESENTED_ANSWER];
-      const accepted = Boolean(acquired && result && !failureCode && !result.data.fallbackReason
-        && clarification.submittedCount === (input.clarificationReplies?.length ?? 0)
-        && clarification.completedCount === clarification.submittedCount
-        && (!clarification.submittedCount || clarification.sameWorkflow && clarification.revisionsAdvanced)
-        && (!clarification.postAcquisitionCount || clarification.retainedEvidence && clarification.budgetsPreserved)
-        && evidenceAssessment?.decision === 'accept' && hasBoundGamingPresentedAnswer(result.data)
-        && binding?.contextFingerprint === evidenceAssessment.contextFingerprint
-        && binding?.evidenceSubjectHash === evidenceAssessment.subjectHash
-        && final?.status === 200 && final.body.state === 'answer_ready' && final.body.nextAction === 'answer'
-        && final.body.answer?.response === result.data.response);
-      const presentation: LivePreviewPresentation | undefined = accepted && binding
+      const body = final?.body;
+      const answer = body?.answer;
+      let binding: Omit<GamingPresentedAnswer, 'evidenceSubjectHash'> | undefined;
+      if (result && !failureCode && !result.data.fallbackReason && final?.status === 200
+        && body?.state === 'answer_ready' && body.nextAction === 'answer' && answer?.response === result.data.response) {
+        if (conversational) {
+          const grounding = result.data.grounding;
+          const noGroundingClaims = !grounding || grounding.groundingStatus !== 'grounded'
+            && !grounding.groundedInSuppliedEvidence
+            && Object.values(grounding).every(value => typeof value !== 'number' || value === 0);
+          if (answer.grounding === 'model_knowledge' && answer.provenance === 'arcanos-trinity'
+            && body.freshnessStatus === 'not_applicable' && body.gapAssessmentStatus === 'not_assessed'
+            && !acquired && !clarification.acquisitionCount && !body.discovery
+            && !result.data.sources.length && !answer.sources.length && noGroundingClaims
+            && !body.sourceKnown && !body.evidenceSelected && !body.coverageSatisfied
+            && !body.selectedCandidateIds?.length && !body.selectedEvidenceIds?.length && !body.candidates?.length
+            && !checkGamingConversationalAnswerIntegrity(result.data.response)) {
+            binding = { policyVersion: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
+              subjectHash: gamingClearHash(result.data.response), contextFingerprint: gamingClearHash(input.query) };
+          }
+        } else {
+          const grounded = (result.data as GamingPresentedAnswerCarrier)[GAMING_PRESENTED_ANSWER];
+          if (acquired && clarification.submittedCount === (input.clarificationReplies?.length ?? 0)
+            && clarification.completedCount === clarification.submittedCount
+            && (!clarification.submittedCount || clarification.sameWorkflow && clarification.revisionsAdvanced)
+            && (!clarification.postAcquisitionCount || clarification.retainedEvidence && clarification.budgetsPreserved)
+            && evidenceAssessment?.decision === 'accept' && hasBoundGamingPresentedAnswer(result.data)
+            && grounded?.contextFingerprint === evidenceAssessment.contextFingerprint
+            && grounded?.evidenceSubjectHash === evidenceAssessment.subjectHash) binding = grounded;
+        }
+      }
+      const accepted = binding !== undefined;
+      const presentation: LivePreviewPresentation | undefined = binding
         ? { policyVersion: binding.policyVersion, boundToFinalAnswer: true } : undefined;
-      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, presentation, stages,
+      lastObservation = createLiveValidationObservation({ body, accepted, presentation, stages,
         ...(input.clarificationReplies?.length ? { clarification } : {}) });
       return { result, accepted, presentation, failureCode,
-        ...(accepted && result && binding ? { privateAnswer: { version: 2 as const, policyVersion: binding.policyVersion,
+        ...(accepted && conversational ? { answerGrounding: 'model_knowledge' as const } : {}),
+        ...(result && binding ? { privateAnswer: { version: 2 as const, policyVersion: binding.policyVersion,
           response: result.data.response, subjectHash: binding.subjectHash, contextFingerprint: binding.contextFingerprint,
           sources: result.data.sources.map((source, index) => ({ index: index + 1, url: source.url })) } } : {}) };
     }
