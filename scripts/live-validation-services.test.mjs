@@ -145,7 +145,8 @@ test('public health and authenticated exact-SHA readiness perform no provider ca
   const ready = await f.ready(); assert.equal(ready.status, 200);
   assert.equal(ready.body.sourceCommit, f.identity.sourceCommit);
   assert.deepEqual(ready.body.buildManifest, f.buildManifest);
-  assert.deepEqual(ready.body.readiness, { modelCredentialBound: true, providerCallsEnabled: false, durableWritesEnabled: false });
+  assert.deepEqual(ready.body.readiness, { modelCredentialBound: true, providerCallsEnabled: false,
+    durableWritesEnabled: false, runtimeTimeMs: f.now() });
   assert.deepEqual(f.counts(), { providerCalls: 0, providerCreates: 0, adapterCreates: 0, adapterExecutes: 0 });
   assert.ok(!ready.text.includes(TOKEN) && !ready.text.includes(CREDENTIAL));
 });
@@ -155,12 +156,26 @@ test('admission requires exact SHA/deployment, explicit paid authority, approved
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, f.headers())).status, 403);
   await f.ready();
   for (const changed of [{ paidAuthorized: false }, { profileHash: '0'.repeat(64) }, { commitSha: 'c'.repeat(40) },
-    { runtimeDeploymentId: id(99) }, { expiresAtMs: 0 }, { expiresAtMs: Date.now() + 700_000 }]) {
+    { runtimeDeploymentId: id(99) }]) {
     assert.equal((await request(f.runtime, 'POST', '/runs', { ...f.plan, ...changed }, f.headers())).status, 403);
   }
   assert.equal(f.counts().providerCreates, 0); assert.equal(f.counts().adapterCreates, 0);
   const wrong = { ...f.headers(), 'x-arcanos-source-commit': 'c'.repeat(40) };
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, wrong)).status, 401);
+});
+
+test('admission rejects deadlines outside the unchanged runtime budget before creating a provider', async t => {
+  const f = fixture(t);
+  await f.ready();
+  for (const expiresAtMs of [f.now(), f.now() + f.target.limits.durationMs + 1]) {
+    const denied = await request(f.runtime, 'POST', '/runs', { ...f.plan, expiresAtMs }, f.headers());
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error.code, 'LIVE_VALIDATION_RUN_DEADLINE_INVALID');
+  }
+  assert.deepEqual(f.counts(), { providerCalls: 0, providerCreates: 0, adapterCreates: 0, adapterExecutes: 0 });
+  assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, f.headers())).status, 200);
+  assert.equal(f.counts().providerCreates, 1);
+  assert.equal(f.counts().providerCalls, 0);
 });
 
 test('load only fixed checked-in suites and preserve the stock Elite Dangerous profile', () => {

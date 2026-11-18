@@ -480,6 +480,16 @@ verifier tunnel to provision.
 
 ## Sanitized stage evidence
 
+The authenticated readiness response includes a runtime clock sample. The
+controller uses that clock to set the runtime deadline within the approved
+duration and independently enforces its own elapsed-time cap. The runtime still
+rejects expired or overlong deadlines before creating a provider guard. Older
+runtimes that omit the sample retain their original absolute-deadline behavior.
+
+When run admission returns HTTP 401 or 403, the controller records the status and
+any allowlisted runtime error code in `admissionFailure`. The receipt keeps
+credentials, raw response bodies and error messages out of evidence.
+
 Each live result distinguishes measured source acquisition, evidence selection,
 generation and response construction. Intake, reasoning
 and final stages retain individual timing hooks. Positive acceptance requires

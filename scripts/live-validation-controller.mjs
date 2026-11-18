@@ -26,6 +26,15 @@ const ANSWER_AUDIT_PROVIDER_CODES = ['LIVE_VALIDATION_PROVIDER_TIMEOUT', 'LIVE_V
   'LIVE_VALIDATION_RUN_CLOSED', 'LIVE_VALIDATION_PROVIDER_MODEL_MISMATCH', 'LIVE_VALIDATION_PROVIDER_FAILED',
   'LIVE_VALIDATION_PROVIDER_RESPONSE_INVALID', 'LIVE_VALIDATION_PROVIDER_RESPONSE_LIMIT', 'LIVE_VALIDATION_USAGE_INVALID',
   'LIVE_VALIDATION_BUDGET_EXPIRED'];
+const RUNTIME_ADMISSION_CODES = new Set([
+  'LIVE_VALIDATION_IDENTITY_UNAUTHORIZED', 'LIVE_VALIDATION_RUN_ALREADY_CLAIMED_OR_NOT_READY',
+  'LIVE_VALIDATION_REQUEST_INVALID', 'LIVE_VALIDATION_REQUEST_LIMIT', 'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH',
+  'LIVE_VALIDATION_RUN_DEADLINE_INVALID', 'LIVE_VALIDATION_OPENAI_KEY_REQUIRED', 'LIVE_VALIDATION_RUN_EXPIRED',
+  'LIVE_VALIDATION_CREDENTIAL_INVALID', 'LIVE_VALIDATION_DEPLOYMENT_MISMATCH', 'LIVE_VALIDATION_MODELS_INVALID',
+  'LIVE_VALIDATION_BUDGET_CLOCK_INVALID', 'LIVE_VALIDATION_BUDGET_EXPIRED', 'LIVE_VALIDATION_BUDGET_LIMITS_INVALID',
+  'LIVE_VALIDATION_BUDGET_MODELS_INVALID', 'LIVE_VALIDATION_REQUEST_FAILED'
+]);
+const MAX_RUNTIME_ADMISSION_ERROR_BYTES = 1_024;
 const MAX_ANSWER_AUDIT_TIMEOUT_MS = 12_000;
 export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'lint', 'build', 'railway', 'workflow',
   'secret-scan', 'service-auth', 'egress', 'exact-sha', 'gaming']);
@@ -522,12 +531,34 @@ function assertReady(value, target, role, commitSha, deploymentId, artifact) {
     && value.readiness?.providerCallsEnabled === false && value.readiness.modelCredentialBound === true
     && value.readiness.durableWritesEnabled === false,
   'LIVE_VALIDATION_PRIVATE_IDENTITY_MISMATCH');
+  const runtimeTimeMs = value.readiness.runtimeTimeMs;
+  requireController(runtimeTimeMs === undefined || integer(runtimeTimeMs, 1, Number.MAX_SAFE_INTEGER - target.limits.durationMs),
+    'LIVE_VALIDATION_RUNTIME_CLOCK_INVALID');
   const manifest = value.buildManifest;
   requireController(exact(manifest, ['version', 'repository', 'sourceCommit', 'role', 'treeSha', 'compiledSha256'])
     && manifest.version === 1 && manifest.repository === target.repository && manifest.sourceCommit === commitSha && manifest.role === role
     && manifest.treeSha === artifact.treeSha && manifest.compiledSha256 === artifact.compiledSha256
     && canonicalHash(manifest) === value.buildManifestSha256, 'LIVE_VALIDATION_BUILD_MANIFEST_MISMATCH');
   return identityFields(value);
+}
+async function readRuntimeAdmissionCode(response) {
+  if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return undefined;
+  try {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body ?? []) {
+      size += chunk.byteLength;
+      if (size > MAX_RUNTIME_ADMISSION_ERROR_BYTES) return undefined;
+      chunks.push(chunk);
+    }
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (exact(body, ['error']) && exact(body.error, ['code']) && RUNTIME_ADMISSION_CODES.has(body.error.code)) {
+      return body.error.code;
+    }
+  } catch {
+    // The status is still retained when the origin has no usable error code.
+  }
+  return undefined;
 }
 /** Service credentials only enter the approved managed HTTPS origin; never log response errors. */
 export function createLiveValidationServiceClient({ origin, token, fetchImplementation = globalThis.fetch }) {
@@ -545,13 +576,22 @@ export function createLiveValidationServiceClient({ origin, token, fetchImplemen
     const response = await fetchImplementation(new URL(route, origin), { method: options.method ?? 'GET',
       headers: { ...options.headers, authorization: 'Bearer ' + token, ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }), signal, redirect: 'error' });
+    if (route === '/runs' && options.method === 'POST' && [401, 403].includes(response.status)) {
+      const runtimeCode = await readRuntimeAdmissionCode(response);
+      return { status: response.status, body: null, ...(runtimeCode ? { runtimeCode } : {}) };
+    }
     return { status: response.status, body: await boundedJson(response, 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED') };
   } });
 }
 async function serviceJson(client, route, options = {}) {
   const result = await client.requestJSON(route, { timeoutMs: CONTROL_TIMEOUT_MS, ...options });
-  requireController(result.status === 200 && record(result.body), 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
-  return result.body;
+  if (result.status === 200 && record(result.body)) return result.body;
+  const error = new LiveValidationControllerError('LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
+  if (route === '/runs' && [401, 403].includes(result.status)) {
+    error.admissionFailure = { httpStatus: result.status,
+      ...(RUNTIME_ADMISSION_CODES.has(result.runtimeCode) ? { code: result.runtimeCode } : {}) };
+  }
+  throw error;
 }
 function authHeaders(_run, runtime) {
   return { 'x-arcanos-source-commit': runtime.sourceCommit, 'x-arcanos-deployment-id': runtime.deploymentId };
@@ -918,12 +958,17 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     const observed = normalizeLiveValidationInventory(target, await railway.inventory(target));
     requireController(observed.instances[0].activeDeployments?.length === 1
       && observed.instances[0].activeDeployments[0].id === state.runtimeDeploymentId, 'LIVE_VALIDATION_ACTIVE_DEPLOYMENT_MISMATCH');
-    runtimeIdentity = assertReady(await runJson('/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId, artifact);
+    const ready = await runJson('/ready');
+    runtimeIdentity = assertReady(ready, target, 'runtime', args.commitSha, state.runtimeDeploymentId, artifact);
     const freshGate = await assertLiveValidationGitHubGate({ github: createGitHub(), args, artifact, environment, git });
     requireController(freshGate.baseSha === githubGate.baseSha, 'LIVE_VALIDATION_PR_BASE_MOVED');
     checkDeadline(); const paidStarted = now(); deadline = paidStarted + args.limits.durationMs;
+    // Use the authenticated runtime's clock for its deadline. Readiness and revalidation time
+    // count against that window, while the controller still caps its own elapsed run time.
+    const runtimeTimeMs = ready.readiness.runtimeTimeMs ?? paidStarted;
     plan = { runId: state.runId, prNumber: args.prNumber, commitSha: args.commitSha,
-      runtimeDeploymentId: state.runtimeDeploymentId, profileHash, expiresAtMs: deadline, paidAuthorized: true };
+      runtimeDeploymentId: state.runtimeDeploymentId, profileHash,
+      expiresAtMs: runtimeTimeMs + args.limits.durationMs, paidAuthorized: true };
     state.runStarted = true; writeState(state); // Cleanup covers a partially delivered activation.
     const admitted = await runJson('/runs', { method: 'POST', body: plan });
     requireController(admitted.admitted === true && admitted.runId === state.runId, 'LIVE_VALIDATION_RUNTIME_ADMISSION_FAILED');
@@ -975,7 +1020,9 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     if (plan && state.runStarted) try { actualUsage = sanitizeLiveValidationUsage(await serviceJson(runtime, '/usage', { headers: authHeaders(plan, runtimeIdentity) }), { plan, target }); usageReadback = 'PASS'; } catch { /* Preserve original failure. */ }
     summary = { version: SUMMARY_VERSION, status: cases.length > 0 ? 'FAILED' : 'BLOCKED', code: safeCode(error), ...localGate,
       runId: state.runId, prNumber: args.prNumber, elapsedMs: Math.max(0, now() - started), observedCases: cases,
-      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}), usageReadback };
+      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}),
+      ...(error instanceof LiveValidationControllerError && error.admissionFailure ? { admissionFailure: error.admissionFailure } : {}),
+      usageReadback };
   } finally {
     cleanup = await cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState, now, sleep });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), cleanup);

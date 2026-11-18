@@ -218,6 +218,23 @@ test('controller leaves a competing one-shot claim intact before runtime mutatio
   assert.deepEqual(e.seen, []);
 });
 
+test('controller rejects a malformed authenticated runtime clock before admission', async t => {
+  const f = fixture(t);
+  const e = executionFixture(f);
+  const requestJSON = e.service.requestJSON;
+  e.service.requestJSON = async (route, request) => {
+    const result = await requestJSON(route, request);
+    if (route === '/ready') result.body.readiness.runtimeTimeMs = Number.MAX_SAFE_INTEGER;
+    return result;
+  };
+  const result = await execute(f, e);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.code, 'LIVE_VALIDATION_RUNTIME_CLOCK_INVALID');
+  assert.deepEqual(result.observedCases, []);
+  assert.equal(e.seen.includes('/runs'), false);
+  assert.equal(result.cleanup.status, 'PASS');
+});
+
 test('CLI accepts PR, exact SHA or both, and requires paired paid flags with hard ceilings', t => {
   const f = fixture(t);
   assert.equal(parseLiveValidationControllerArguments(f.argv).execute, false);
@@ -1089,6 +1106,48 @@ test('normal HTTPS service client rejects aliases/redirects and never sends bear
   } });
   await assert.rejects(client.requestJSON('//attacker.invalid')); await assert.rejects(client.requestJSON('/ready?redirect=1')); assert.equal(calls, 0);
   await client.requestJSON('/ready'); assert.equal(calls, 1);
+});
+test('service client preserves only bounded allowlisted /runs rejection diagnostics', async t => {
+  const origin = targetFixture().publicOrigin;
+  const allowedCode = 'LIVE_VALIDATION_RUN_DEADLINE_INVALID';
+  const token = 'a'.repeat(64);
+  const diagnostic = { error: { code: allowedCode } };
+  for (const { name, response, expectedCode } of [
+    { name: 'exact known code', response: () => Response.json(diagnostic, { status: 403 }), expectedCode: allowedCode },
+    { name: 'unknown code with trusted prefix', response: () => Response.json({
+      error: { code: 'LIVE_VALIDATION_UNREVIEWED_CODE' }
+    }, { status: 403 }) },
+    { name: 'credential in an extra error field', response: () => Response.json({
+      error: { ...diagnostic.error, message: token }
+    }, { status: 403 }) },
+    { name: 'credential in an extra root field', response: () => Response.json({
+      ...diagnostic, detail: token
+    }, { status: 403 }) },
+    { name: 'untrusted plain body', response: () => new Response(token, { status: 403 }) },
+    { name: 'non-JSON body claiming JSON', response: () => new Response(token, {
+      status: 403, headers: { 'content-type': 'application/json' }
+    }) },
+    { name: 'oversized stream without declared content length', response: () => new Response(
+      ' '.repeat(1_025) + JSON.stringify(diagnostic),
+      { status: 403, headers: { 'content-type': 'application/json' } }
+    ) }
+  ]) await t.test(name, async () => {
+    const client = createLiveValidationServiceClient({ origin, token, fetchImplementation: async () => response() });
+    const result = await client.requestJSON('/runs', { method: 'POST' });
+    assert.deepEqual(result, { status: 403, body: null, ...(expectedCode ? { runtimeCode: expectedCode } : {}) });
+    assert.equal(JSON.stringify(result).includes(token), false);
+  });
+});
+
+test('service client keeps rejection bodies private outside /runs admission', async () => {
+  const origin = targetFixture().publicOrigin;
+  const token = 'a'.repeat(64);
+  for (const [route, method, status] of [['/acceptance', 'POST', 403], ['/runs', 'GET', 403], ['/runs', 'POST', 500]]) {
+    const client = createLiveValidationServiceClient({ origin, token, fetchImplementation: async () => Response.json({
+      error: { code: 'LIVE_VALIDATION_RUN_DEADLINE_INVALID' }
+    }, { status }) });
+    await assert.rejects(client.requestJSON(route, { method }), { code: 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED' });
+  }
 });
 test('provider usage evidence rejects excess budget, negative counts and unsupported provider counters', t => {
   const f = fixture(t); const plan = { runId: 'a'.repeat(32), commitSha: sha, prNumber: 1528, runtimeDeploymentId, profileHash: 'b'.repeat(64) };

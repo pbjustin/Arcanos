@@ -100,10 +100,13 @@ function observation(positive) {
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 
-async function exerciseController(t, { metadataStatus = 200, generationStatus = 200, withholdAnswer = false, paired = false } = {}) {
+async function exerciseController(t, { metadataStatus = 200, generationStatus = 200, withholdAnswer = false,
+  paired = false, runtimeClockOffsetMs = 0, expireAdmission = false } = {}) {
   const profile = paired ? 'gaming-gta-iv-dual' : 'gaming-guide';
   const profiles = readLiveValidationProfiles(ROOT, profile);
   const f = fixture(t, profile);
+  const controllerNow = () => 1_700_000_000_000;
+  const runtimeNow = () => controllerNow() + runtimeClockOffsetMs;
   let token; let active = false; let stopped = false; let providerCalls = 0; let server; let origin;
   let application; const routes = []; const providerUrls = [];
   // Controlled adapter/provider fixtures exercise transport and retention only;
@@ -122,6 +125,7 @@ async function exerciseController(t, { metadataStatus = 200, generationStatus = 
       assert.equal(commitSha, sha); assert.equal(role, 'runtime'); active = true;
       let lastObservation;
       application = createValidationRuntimeApplication({ target, identity: identity(target), profiles,
+        now: runtimeNow,
         buildManifest: identity(target).buildManifest, testToken: token, apiKey: 'sk-offline-test-synthetic-validation-credential',
         resolveResponseModelIdentity: async () => (response, expected) => response.model === expected ? expected : undefined,
         createProvider: options => {
@@ -219,13 +223,31 @@ async function exerciseController(t, { metadataStatus = 200, generationStatus = 
   };
   t.after(async () => { application?.close(); if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } });
   const result = await runLiveValidationController([...f.argv, '--execute', '--allow-paid-provider'], {
-    environment: f.environment, readGitState: () => git, createGitHubApi: () => ghFixture(f), createRailwayApi: () => railway,
+    environment: f.environment, now: controllerNow, readGitState: () => git, createGitHubApi: () => ghFixture(f), createRailwayApi: () => railway,
     // This controlled boundary maps only the already verified Railway origin to a real loopback HTTP server.
     fetchImplementation: (url, init) => {
       const requested = new URL(url); assert.equal(requested.origin, f.target.publicOrigin);
+      if (requested.pathname === '/runs' && expireAdmission) {
+        const plan = JSON.parse(init.body);
+        init = { ...init, body: JSON.stringify({ ...plan, expiresAtMs: runtimeNow() }) };
+      }
       return fetch(origin + requested.pathname, init);
     }
   });
+  if (expireAdmission) {
+    assert.equal(result.status, 'BLOCKED');
+    assert.equal(result.code, 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
+    assert.deepEqual(result.admissionFailure, { httpStatus: 403, code: 'LIVE_VALIDATION_RUN_DEADLINE_INVALID' });
+    assert.equal(result.observedCases.length, 0);
+    assert.equal(providerCreations, 0);
+    assert.equal(providerCalls, 0);
+    assert.equal(routes.filter(route => route === '/runs').length, 1);
+    assert.equal(routes.includes('/acceptance'), false);
+    assert.equal(result.cleanup.runtimeDeploymentStopped, true);
+    const receipt = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'acceptance-summary.json'), 'utf8'));
+    assert.deepEqual(receipt.admissionFailure, result.admissionFailure);
+    return;
+  }
   const modelUrl = 'https://api.openai.com/v1/models/' + f.target.models[1].id;
   if (paired) {
     assert.equal(providerCreations, 1);
@@ -351,3 +373,9 @@ test('controller runs the no-source and grounded GTA IV cases under one budget a
   t => exerciseController(t, { paired: true }));
 test('controller consumes a failed no-source attempt once and stops before the grounded GTA IV case',
   t => exerciseController(t, { paired: true, generationStatus: 400 }));
+
+test('controller admits both paired cases with the runtime clock behind the operator clock',
+  t => exerciseController(t, { paired: true, runtimeClockOffsetMs: -150 }));
+
+test('controller retains the closed runtime code when admission fails before either case',
+  t => exerciseController(t, { paired: true, expireAdmission: true }));

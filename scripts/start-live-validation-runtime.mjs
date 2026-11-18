@@ -94,7 +94,7 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       if (request.method === 'GET' && request.url === '/ready') {
         readinessObserved = true;
         return validationJson(response, { ...identity, buildManifest, readiness: { modelCredentialBound: credentialBound(apiKey),
-          providerCallsEnabled: false, durableWritesEnabled: false } });
+          providerCallsEnabled: false, durableWritesEnabled: false, runtimeTimeMs: now() } });
       }
       if (request.method === 'POST' && request.url === '/runs') {
         requireValidation(readinessObserved && !runClaimed && !admitting, 'LIVE_VALIDATION_RUN_ALREADY_CLAIMED_OR_NOT_READY');
@@ -108,9 +108,11 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
           && Number.isSafeInteger(body.prNumber) && body.prNumber > 0 && body.prNumber <= 1_000_000_000
           && body.commitSha === identity.sourceCommit
           && body.runtimeDeploymentId === identity.deploymentId && profileSuite
-          && body.paidAuthorized === true && Number.isSafeInteger(body.expiresAtMs)
-          && body.expiresAtMs > now() && body.expiresAtMs <= now() + target.limits.durationMs,
+          && body.paidAuthorized === true,
         'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH');
+        const admittedAtMs = now();
+        requireValidation(Number.isSafeInteger(body.expiresAtMs) && body.expiresAtMs > admittedAtMs
+          && body.expiresAtMs <= admittedAtMs + target.limits.durationMs, 'LIVE_VALIDATION_RUN_DEADLINE_INVALID');
         requireValidation(credentialBound(apiKey), 'LIVE_VALIDATION_OPENAI_KEY_REQUIRED');
         // Claim before importing the app or creating any provider transport. Failures consume the run.
         runClaimed = true;
