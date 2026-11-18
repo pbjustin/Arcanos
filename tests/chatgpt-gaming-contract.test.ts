@@ -153,6 +153,17 @@ describe('explicit Gaming hybrid v2 contract compatibility', () => {
     })).toBe(false);
   });
 
+  it.each([
+    ['x'.repeat(399) + '\u{1F3AE}', true],
+    ['x'.repeat(400) + '\u{1F3AE}', false],
+  ])('counts interpretation length by Unicode code points (%#)', (interpretation, accepted) => {
+    const input = { ...v2Query, semanticAssistance: { version: 'gaming-semantic-v1', interpretation } };
+    expect(isGamingMcpInput('arcanos_gaming_hybrid_query', input)).toBe(accepted);
+    const parsed = gamingHybridQuerySchema.safeParse(input);
+    expect(parsed.success).toBe(accepted);
+    if (parsed.success) expect(parsed.data).toMatchObject({ semanticAssistance: { interpretation } });
+  });
+
   it('accepts one literal source reference alongside stricter freshness requirements', () => {
     const query = { ...v2Query, question: 'How does that guide compare to the current patch?' };
     for (const evidenceNeed of ['specific_source', 'current_patch', 'live_status']) {

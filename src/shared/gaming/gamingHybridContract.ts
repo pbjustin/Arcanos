@@ -45,7 +45,7 @@ const gamingHybridQueryFields = {
 };
 const gamingSemanticAssistanceSchema = z.object({
   version: z.literal('gaming-semantic-v1'),
-  interpretation: z.string().max(400).check(utf16MaxLength(400))
+  interpretation: z.string().max(400)
     .regex(/^(?![\s\S]*[\p{Cc}\p{Cf}\p{Zl}\p{Zp}])[\s\S]*\S/u).optional(),
   evidenceNeed: z.enum(['required', 'specific_source', 'current_patch', 'live_status']).optional(),
   requiredSourceUrl: z.string().max(2_048).check(utf16MaxLength(2_048))
