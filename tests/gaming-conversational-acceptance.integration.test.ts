@@ -358,7 +358,7 @@ describe('explicit Gaming research with semantic assistance', () => {
     const initial = await run.query({ semanticAssistance: { version: semanticVersion, evidenceNeed: 'required' } });
     expect(initial.result).toMatchObject({ state: 'discovery_required', nextAction: 'search', evidenceSelected: false });
     const continuation = await run.query({ workflowId: initial.result.workflowId, expectedRevision: initial.result.revision,
-      idempotencyKey: 'conversation-continuation-001' });
+      idempotencyKey: 'clarify01' });
     expect(continuation.result.answer).toBeUndefined();
     expect(trinity).not.toHaveBeenCalled();
   });

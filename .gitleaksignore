@@ -65,3 +65,6 @@ d4c4b9e2752a542d6983022e4cd45c56661556f3:daemon-python/arcanos/agentic/history_d
 579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:81
 579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:90
 579ba2319cec9e8de326f5374135797a6833b629:tests/gaming-cr2-claim-identity.test.ts:generic-api-key:140
+
+# Shortened offline Gaming test operation key. Keep its exact historical false positive.
+c248f4218e094cc967f9adc6d9d1a9e86731e9b8:tests/gaming-conversational-acceptance.integration.test.ts:generic-api-key:361
