@@ -43,9 +43,20 @@ const gamingHybridQueryFields = {
   spoilerTolerance: z.enum(['none', 'light', 'full', 'avoid', 'allowed', 'unknown', 'no spoilers', 'ok', 'spoilers ok']).optional(),
   answerDepth: z.enum(['auto', 'concise', 'standard', 'detailed']).optional()
 };
+const gamingSemanticAssistanceSchema = z.object({
+  version: z.literal('gaming-semantic-v1'),
+  interpretation: z.string().max(400)
+    .regex(/^(?![\s\S]*[\p{Cc}\p{Cf}\p{Zl}\p{Zp}])[\s\S]*\S/u).optional(),
+  evidenceNeed: z.enum(['required', 'specific_source', 'current_patch', 'live_status']).optional(),
+  requiredSourceUrl: z.string().max(2_048).check(utf16MaxLength(2_048))
+    .regex(/^https?:\/\/[^/\s\p{Cc}\p{Cf}\\][^\s\p{Cc}\p{Cf}\\]*$/iu).pipe(z.url()).optional()
+}).strict();
+export type GamingSemanticAssistance = z.infer<typeof gamingSemanticAssistanceSchema>;
+
 export const gamingHybridQuerySchema = z.discriminatedUnion('contractVersion', [
   z.object({ contractVersion: z.literal(GAMING_HYBRID_CONTRACT_VERSION), ...gamingHybridQueryFields }).strict(),
   z.object({ contractVersion: z.literal(GAMING_HYBRID_V2_CONTRACT_VERSION), ...gamingHybridQueryFields,
+    semanticAssistance: gamingSemanticAssistanceSchema.optional(),
     workflowId: z.string().check(legacyUuid()).optional(), expectedRevision: z.number().check(...legacyInteger()).min(0).max(1_000_000).optional() }).strict()
 ]).superRefine((query, context) => {
   if (query.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
@@ -114,6 +125,7 @@ export interface GamingHybridResponse {
     reviewedSources?: Array<{ url: string; ruleId: string; role: 'current_index' | 'live_status' }> };
   candidates?: Array<{ candidateId?: string; url?: string; decision: string; reasonCodes: string[]; sourceCategory?: string;
     origin?: 'submitted' | 'required_official_article' }>;
-  answer?: { response: string; sources: Array<{ url: string; title?: string; sourceId?: string; patchVersion?: string; fetchedAt?: string }>; provenance: 'arcanos-trinity'; requestId: string };
+  answer?: { response: string; sources: Array<{ url: string; title?: string; sourceId?: string; patchVersion?: string; fetchedAt?: string }>;
+    grounding?: 'model_knowledge'; provenance: 'arcanos-trinity'; requestId: string };
   ingestion?: { ingestionId: string; status: string; statusUrl: string; maxPolls: number };
 }

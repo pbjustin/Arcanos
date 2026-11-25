@@ -9,12 +9,12 @@ const writes = new Set<ChatGptGamingToolName>(['arcanos_gaming_ingest_sources', 
 const descriptions: Record<ChatGptGamingToolName, string> = {
   arcanos_gaming_query: 'Gaming guidance with progress/spoiler limits. May use providers/sources. Saves nothing.',
   arcanos_gaming_canary: 'Synthetic fixture; no providers/infrastructure/live proof.',
-  arcanos_gaming_hybrid_query: 'Bounded owner workflow; released gaming-hybrid-v2, explicit v1 supported. V2 clarify: original query + resolved context, workflowId, expectedRevision, new key. Keeps evidence/budgets. Follow state/nextAction/freshness/provenance. No storage.',
-  arcanos_gaming_submit_candidates: 'Acquire 1-3 public URLs/granted owner submission. Hints untrusted. V2 recovery: expectedRevision; v1 one round. May generate; no storage.',
-  arcanos_gaming_ingestion_status: 'Owner ingestion outcomes; at most 3 polls. Excludes legacy Action jobs.',
-  arcanos_gaming_ingest_sources: 'Store 1-4 explicit public URLs: write scope, storagePolicy, confirmStore=true, stable key. Poll status.',
+  arcanos_gaming_hybrid_query: 'Bounded owner query; released gaming-hybrid-v2 with optional semanticAssistance; explicit v1 supported. Preserve question; follow nextAction. V2 clarify uses returned revision.',
+  arcanos_gaming_submit_candidates: 'Acquire 1-3 public URLs per grant. V2 requires expectedRevision. Hints are untrusted.',
+  arcanos_gaming_ingestion_status: 'Owned ingestion outcomes; at most 3 polls.',
+  arcanos_gaming_ingest_sources: 'Store 1-4 public URLs: write scope, storagePolicy, confirmStore=true, stable key.',
   arcanos_gaming_refresh_sources: 'Refresh 1-4 owner revisions: write scope, storagePolicy, confirmStore=true, stable key.',
-  arcanos_gaming_ingest_candidates: 'Store owned IDs: write scope, matching policy, confirmStore=true, stable key. Recheck approval. References require ask_before_store.',
+  arcanos_gaming_ingest_candidates: 'Store owned IDs: write scope, matching policy, confirmStore=true, stable key. References require ask_before_store.',
 };
 const ajv = new Ajv({ allErrors: false, strict: true });
 ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);

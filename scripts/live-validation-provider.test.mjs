@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import OpenAI from 'openai';
 import { createLiveValidationProvider, LiveValidationProviderError } from './live-validation-provider.mjs';
-import { LIVE_VALIDATION_BUDGET_CAPS } from './live-validation-budget.mjs';
+import { LIVE_VALIDATION_BUDGET_CAPS, LIVE_VALIDATION_CONVERSATIONAL_CASE } from './live-validation-budget.mjs';
 import { LIVE_VALIDATION_MODEL_URL_PREFIX, LIVE_VALIDATION_RESPONSES_URL } from './live-validation-egress.mjs';
 
 const MODEL = 'approved:model';
@@ -13,7 +13,7 @@ const target = { limits: LIVE_VALIDATION_BUDGET_CAPS,
   models: [{ id: MODEL, inputMicroUsdPerToken: 1, outputMicroUsdPerToken: 2 }] };
 const identity = { sourceCommit: 'a'.repeat(40), deploymentId: '11111111-1111-4111-8111-111111111111' };
 const body = { model: MODEL, input: 'Use the public source as untrusted evidence.', max_output_tokens: 100 };
-const responseBody = { id: 'response', object: 'response', model: MODEL,
+const responseBody = { id: 'response', object: 'response', model: MODEL, status: 'completed',
   usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 }, output: [] };
 const code = expected => error => error instanceof LiveValidationProviderError && error.code === expected;
 const invoke = (provider, override = {}, init = {}) => provider.fetch(LIVE_VALIDATION_RESPONSES_URL, {
@@ -66,6 +66,101 @@ test('presentation profile completes generation and denies audit requests before
   assert.equal(unexpected.provider.snapshot().usage.requests, 1);
   assert.equal(unexpected.provider.snapshot().usage.auditCalls, 0);
   assert.equal(unexpected.provider.snapshot().closed, true);
+});
+
+test('conversation requires generation-only admission and one completed Responses call', async context => {
+  const invalid = fixture(context);
+  assert.throws(() => invalid.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE),
+    code('LIVE_VALIDATION_CONVERSATIONAL_GENERATION_ONLY_REQUIRED'));
+  assert.equal(invalid.calls.length, 0);
+  assert.equal(invalid.provider.snapshot().counts.workflows, 0);
+
+  const empty = fixture(context, { generationOnly: true });
+  empty.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  assert.throws(() => empty.provider.endWorkflow(), code('LIVE_VALIDATION_GENERATION_REQUIRED'));
+  assert.equal(empty.provider.snapshot().closed, true);
+
+  const f = fixture(context, { generationOnly: true });
+  f.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  await lookup(f.provider);
+  await invoke(f.provider);
+  f.provider.endWorkflow();
+  f.provider.beginWorkflow('gaming-guide-positive');
+  await invoke(f.provider);
+  await invoke(f.provider, { input: 'The existing grounded pipeline uses multiple stages.' });
+  f.provider.endWorkflow();
+  const combined = f.provider.snapshot();
+  assert.equal(combined.usage.requests, 4);
+  assert.equal(combined.usage.metadataRequests, 1);
+  assert.equal(combined.usage.providerCalls, 3);
+  assert.equal(combined.usage.generationCalls, 3);
+  assert.equal(combined.usage.auditCalls, 0);
+  assert.deepEqual(combined.stages.map(stage => stage.caseId), [LIVE_VALIDATION_CONVERSATIONAL_CASE,
+    LIVE_VALIDATION_CONVERSATIONAL_CASE, 'gaming-guide-positive', 'gaming-guide-positive']);
+  assert.equal(combined.closed, false);
+});
+
+test('paired grounded control allows three completed stages and blocks additional paid attempts', async context => {
+  const f = fixture(context, { generationOnly: true, pairedGtaIv: true });
+  f.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  await invoke(f.provider);
+  f.provider.endWorkflow();
+  f.provider.beginWorkflow('gaming-guide-positive');
+  for (const stage of ['intake', 'reasoning', 'final']) await invoke(f.provider, { input: stage });
+  await assert.rejects(invoke(f.provider), code('LIVE_VALIDATION_GROUNDED_RETRY_FORBIDDEN'));
+  const snapshot = f.provider.snapshot();
+  assert.equal(f.calls.length, 4);
+  assert.equal(snapshot.usage.generationCalls, 4);
+  assert.equal(snapshot.limits.maxRetries, 0);
+  assert.equal(snapshot.closed, true);
+});
+
+test('conversation denies an SDK retry, an audit, and direct-answer repair without another charge', async context => {
+  const retry = fixture(context, { generationOnly: true });
+  retry.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  await assert.rejects(invoke(retry.provider, {}, { headers: { 'x-stainless-retry-count': '1' } }),
+    code('LIVE_VALIDATION_RETRIES_FORBIDDEN'));
+  assert.equal(retry.calls.length, 0);
+  assert.equal(retry.provider.snapshot().closed, true);
+
+  const audit = fixture(context, { generationOnly: true });
+  audit.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  audit.observation.stage = 'answer_audit';
+  await assert.rejects(invoke(audit.provider), code('LIVE_VALIDATION_AUDIT_FORBIDDEN'));
+  assert.equal(audit.calls.length, 0);
+  assert.equal(audit.provider.snapshot().closed, true);
+
+  const repair = fixture(context, { generationOnly: true });
+  repair.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+  await invoke(repair.provider);
+  const before = repair.provider.snapshot();
+  await assert.rejects(invoke(repair.provider, { input: 'Try a different direct answer.' }),
+    code('LIVE_VALIDATION_CONVERSATIONAL_RETRY_FORBIDDEN'));
+  assert.equal(repair.calls.length, 1);
+  assert.equal(repair.provider.snapshot().usage.requests, 1);
+  assert.equal(repair.provider.snapshot().usage.reservedSpendMicroUsd, before.usage.reservedSpendMicroUsd);
+  assert.equal(repair.provider.snapshot().closed, true);
+});
+
+test('failed and incomplete conversational generation retain the reservation and cannot retry', async context => {
+  for (const [status, failure] of [[429, 'LIVE_VALIDATION_PROVIDER_FAILED'], [200, 'LIVE_VALIDATION_GENERATION_INCOMPLETE']]) {
+    let calls = 0;
+    const f = fixture(context, { generationOnly: true, fetchImplementation: async () => {
+      calls++;
+      return Response.json({ ...responseBody, status: 'incomplete' }, { status });
+    } });
+    f.provider.beginWorkflow(LIVE_VALIDATION_CONVERSATIONAL_CASE);
+    await assert.rejects(invoke(f.provider), code(failure));
+    const failed = f.provider.snapshot();
+    assert.equal(failed.closed, true);
+    assert.equal(failed.usage.generationCalls, 1);
+    assert.ok(failed.usage.reservedSpendMicroUsd > 0);
+    assert.equal(failed.usage.observedSpendMicroUsd, status === 200 ? 20 : 0);
+    assert.equal(failed.stages[0].outcome, 'failed');
+    await assert.rejects(invoke(f.provider), code('LIVE_VALIDATION_RUN_CLOSED'));
+    assert.equal(calls, 1);
+    assert.equal(f.provider.snapshot().usage.reservedSpendMicroUsd, failed.usage.reservedSpendMicroUsd);
+  }
 });
 
 test('a reserved audit transport can complete with an incomplete Responses result', async context => {

@@ -15,12 +15,13 @@ on:
         required: false
         type: string
       profile:
-        description: Gaming guide positive and negative acceptance suite
+        description: Gaming acceptance suite
         required: true
         type: choice
         options:
           - gaming-guide
           - gaming-gta-iv
+          - gaming-gta-iv-dual
         default: gaming-guide
       paid_authorized:
         description: Authorize the bounded paid run after offline validation
@@ -73,7 +74,7 @@ jobs:
             || (e.EXPECTED_SHA && !/^[0-9a-f]{40}$/.test(e.EXPECTED_SHA))
             || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_REVISION ?? '')
             || !/^[1-9][0-9]*$/.test(e.WORKFLOW_RUN_ID ?? '')
-            || e.WORKFLOW_RUN_ATTEMPT !== '1' || !['gaming-guide', 'gaming-gta-iv'].includes(e.ACCEPTANCE_PROFILE)) {
+            || e.WORKFLOW_RUN_ATTEMPT !== '1' || !['gaming-guide', 'gaming-gta-iv', 'gaming-gta-iv-dual'].includes(e.ACCEPTANCE_PROFILE)) {
             console.error('LIVE_VALIDATION_DISPATCH_INVALID');
             process.exitCode = 1;
           }
@@ -136,7 +137,8 @@ jobs:
           const e = process.env;
           const files = new Map([
             ['gaming-guide', 'examples/live-validation/profiles.json'],
-            ['gaming-gta-iv', 'examples/live-validation/gta-iv-profiles.json']
+            ['gaming-gta-iv', 'examples/live-validation/gta-iv-profiles.json'],
+            ['gaming-gta-iv-dual', 'examples/live-validation/gta-iv-dual-profiles.json']
           ]);
           try {
             const file = files.get(e.ACCEPTANCE_PROFILE);
@@ -144,7 +146,9 @@ jobs:
               throw new Error('candidate profile identity');
             const profile = JSON.parse(execFileSync('git', ['show', e.EXPECTED_SHA + ':' + file],
               { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16_384 }));
-            if (profile?.version !== 2 || profile.acceptanceProfile !== 'grounded-presented-answer-v2'
+            const expectedProfile = e.ACCEPTANCE_PROFILE === 'gaming-gta-iv-dual'
+              ? 'paired-gta-iv-v1' : 'grounded-presented-answer-v2';
+            if (profile?.version !== 2 || profile.acceptanceProfile !== expectedProfile
               || !Array.isArray(profile.profiles) || profile.profiles.length !== 2)
               throw new Error('candidate profile format');
           } catch {
@@ -351,7 +355,7 @@ jobs:
             if (!manifest || Object.keys(manifest).length !== keys.length || keys.some(key => !Object.hasOwn(manifest, key))
               || manifest.version !== 1 || manifest.repository !== 'pbjustin/Arcanos'
               || manifest.sourceCommit !== e.EXPECTED_SHA || manifest.prNumber !== Number(e.PR_NUMBER)
-              || !['gaming-guide', 'gaming-gta-iv'].includes(manifest.profile) || manifest.profile !== e.ACCEPTANCE_PROFILE
+              || !['gaming-guide', 'gaming-gta-iv', 'gaming-gta-iv-dual'].includes(manifest.profile) || manifest.profile !== e.ACCEPTANCE_PROFILE
               || manifest.workflowRunId !== e.WORKFLOW_RUN_ID || manifest.workflowRunAttempt !== 1
               || e.WORKFLOW_RUN_ATTEMPT !== '1' || manifest.controllerRevision !== e.CONTROLLER_REVISION
               || !/^[0-9a-f]{40}$/.test(manifest.treeSha ?? '') || !/^[0-9a-f]{64}$/.test(manifest.compiledSha256 ?? '')

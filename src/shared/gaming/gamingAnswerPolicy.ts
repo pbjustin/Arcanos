@@ -56,12 +56,14 @@ const SPOILER_GUIDANCE: Record<GamingSpoilerMode, string> = {
 };
 
 /** Small server-authored guide policy; values and headings never come from source text. */
-export function buildGamingAnswerPolicyInstruction(policy: GamingAnswerPolicy): string {
+export function buildGamingAnswerPolicyInstruction(policy: GamingAnswerPolicy, modelKnowledge = false): string {
   return [
-    TASK_GUIDANCE[policy.task],
+    ...(modelKnowledge ? [] : [TASK_GUIDANCE[policy.task]]),
     DEPTH_GUIDANCE[policy.depth],
     SPOILER_GUIDANCE[policy.spoilerMode],
-    'Use compact existing source-number citations at the relevant paragraph or group of steps. Several chunks from one document are one source. Do not invent page numbers or cite unsupported details.',
+    ...(modelKnowledge ? [] : [
+      'Use compact existing source-number citations at the relevant paragraph or group of steps. Several chunks from one document are one source. Do not invent page numbers or cite unsupported details.'
+    ]),
     'Do not invent an action to satisfy answer-first. Explain unfamiliar mechanics plainly. Use headings and lists only when useful; no fixed number of bullets or mandatory section names.',
     'Respect explicit requests for brevity or detail within server budgets. Preserve complete sentences, Markdown, links, lists, and citations; never cut them to meet a soft length target.',
     'Treat player context as user-provided, request-scoped claims, not verified game state. Do not infer progress from guide headings or chapter order. If conflicting context materially changes guidance, ask one targeted question or give clearly scoped alternatives.'

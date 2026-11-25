@@ -9,13 +9,14 @@ import { createValidationRuntimeApplication, resolveLiveValidationModels,
   LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, validationProfilePassed } from './start-live-validation-runtime.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
 import { validationHash } from './live-validation-bootstrap.mjs';
-import { LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
+import { isLiveValidationProfileSuite, LIVE_VALIDATION_PROFILE_NAMES, readLiveValidationProfiles } from './live-validation-profiles.mjs';
 import { sanitizeLiveValidationUsage } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID } from './live-validation-target.mjs';
 
 const profiles = JSON.parse(readFileSync(new URL('../examples/live-validation/profiles.json', import.meta.url), 'utf8'));
 const root = fileURLToPath(new URL('../', import.meta.url));
 const gtaProfiles = readLiveValidationProfiles(root, 'gaming-gta-iv');
+const pairedProfiles = readLiveValidationProfiles(root, 'gaming-gta-iv-dual');
 const id = suffix => '10000000-0000-4000-8000-' + String(suffix).padStart(12, '0');
 const MODEL = 'ft:gpt-6-luna:arcanos:gaming:offline';
 const PRIVATE_PROMPT = 'private-prompt-do-not-project';
@@ -25,6 +26,7 @@ const CREDENTIAL = 'sk-unit-test-fixture-' + 'x'.repeat(40);
 const TOKEN = 'arcanos-live-validation-test-' + 'f'.repeat(64);
 const PRESENTATION = { policyVersion: 'gaming-clear-presentation/v1', boundToFinalAnswer: true };
 const POSITIVE = 'gaming-guide-positive'; const NEGATIVE = 'gaming-guide-negative';
+const CONVERSATIONAL = 'gaming-guide-conversational';
 
 async function request(application, method, url, body, headers = {}, rawHeaders) {
   let status; let text = '';
@@ -56,10 +58,10 @@ function fixture(t, overrides = {}) {
   const seen = []; let context; let lastObservation;
   const adapter = {
     moduleId: 'gaming', validateInput: input => ({ ok: true, input }),
-    async execute(input, observer) {
+    async execute(input, observer, answerGrounding) {
       adapterExecutes++;
       if (overrides.execute) {
-        const result = await overrides.execute({ input, observer, context, adapter });
+        const result = await overrides.execute({ input, observer, context, adapter, answerGrounding });
         if (result !== undefined) return result;
       }
       observer.onSourceAcquisition('passed');
@@ -143,7 +145,8 @@ test('public health and authenticated exact-SHA readiness perform no provider ca
   const ready = await f.ready(); assert.equal(ready.status, 200);
   assert.equal(ready.body.sourceCommit, f.identity.sourceCommit);
   assert.deepEqual(ready.body.buildManifest, f.buildManifest);
-  assert.deepEqual(ready.body.readiness, { modelCredentialBound: true, providerCallsEnabled: false, durableWritesEnabled: false });
+  assert.deepEqual(ready.body.readiness, { modelCredentialBound: true, providerCallsEnabled: false,
+    durableWritesEnabled: false, runtimeTimeMs: f.now() });
   assert.deepEqual(f.counts(), { providerCalls: 0, providerCreates: 0, adapterCreates: 0, adapterExecutes: 0 });
   assert.ok(!ready.text.includes(TOKEN) && !ready.text.includes(CREDENTIAL));
 });
@@ -153,7 +156,7 @@ test('admission requires exact SHA/deployment, explicit paid authority, approved
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, f.headers())).status, 403);
   await f.ready();
   for (const changed of [{ paidAuthorized: false }, { profileHash: '0'.repeat(64) }, { commitSha: 'c'.repeat(40) },
-    { runtimeDeploymentId: id(99) }, { expiresAtMs: 0 }, { expiresAtMs: Date.now() + 700_000 }]) {
+    { runtimeDeploymentId: id(99) }]) {
     assert.equal((await request(f.runtime, 'POST', '/runs', { ...f.plan, ...changed }, f.headers())).status, 403);
   }
   assert.equal(f.counts().providerCreates, 0); assert.equal(f.counts().adapterCreates, 0);
@@ -161,13 +164,72 @@ test('admission requires exact SHA/deployment, explicit paid authority, approved
   assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, wrong)).status, 401);
 });
 
+test('admission rejects deadlines outside the unchanged runtime budget before creating a provider', async t => {
+  const f = fixture(t);
+  await f.ready();
+  for (const expiresAtMs of [f.now(), f.now() + f.target.limits.durationMs + 1]) {
+    const denied = await request(f.runtime, 'POST', '/runs', { ...f.plan, expiresAtMs }, f.headers());
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error.code, 'LIVE_VALIDATION_RUN_DEADLINE_INVALID');
+  }
+  assert.deepEqual(f.counts(), { providerCalls: 0, providerCreates: 0, adapterCreates: 0, adapterExecutes: 0 });
+  assert.equal((await request(f.runtime, 'POST', '/runs', f.plan, f.headers())).status, 200);
+  assert.equal(f.counts().providerCreates, 1);
+  assert.equal(f.counts().providerCalls, 0);
+});
+
 test('load only fixed checked-in suites and preserve the stock Elite Dangerous profile', () => {
-  assert.deepEqual(LIVE_VALIDATION_PROFILE_NAMES, ['gaming-guide', 'gaming-gta-iv']);
+  assert.deepEqual(LIVE_VALIDATION_PROFILE_NAMES, ['gaming-guide', 'gaming-gta-iv', 'gaming-gta-iv-dual']);
   assert.deepEqual(readLiveValidationProfiles(root, 'gaming-guide'), profiles);
   assert.equal(gtaProfiles.profiles[0].input.query.game, 'Grand Theft Auto IV');
-  for (const name of ['../profiles', 'gta-iv-profiles.json', '__proto__', 'unreviewed']) {
+  assert.deepEqual(pairedProfiles.profiles.map(value => value.id), [CONVERSATIONAL, POSITIVE]);
+  assert.deepEqual(pairedProfiles.profiles.map(value => value.input.candidateUrls.length), [0, 1]);
+  assert.deepEqual(pairedProfiles.profiles[0].input.query.semanticAssistance, { version: 'gaming-semantic-v1' });
+  for (const suite of [profiles, gtaProfiles, pairedProfiles]) assert.equal(isLiveValidationProfileSuite(suite), true);
+  assert.equal(isLiveValidationProfileSuite({ ...pairedProfiles, profiles: [...pairedProfiles.profiles].reverse() }), false);
+  for (const name of ['../profiles', 'gta-iv-profiles.json', 'gta-iv-dual-profiles.json', '__proto__', 'unreviewed']) {
     assert.throws(() => readLiveValidationProfiles(root, name), { code: 'LIVE_VALIDATION_PROFILE_INVALID' });
   }
+});
+
+test('the paired run requires reviewed inputs in order and blocks grounded execution after a failed conversation', async t => {
+  const f = fixture(t, { selectedProfiles: pairedProfiles, profileSuites: [profiles, gtaProfiles, pairedProfiles],
+    async execute({ input, context, answerGrounding }) {
+      assert.deepEqual(input, pairedProfiles.profiles[0].input);
+      assert.equal(answerGrounding, 'model_knowledge');
+      const client = new OpenAI({ apiKey: 'validation-provider-placeholder', baseURL: 'https://api.openai.com/v1',
+        maxRetries: 0, fetch: context.provider.fetch });
+      await client.responses.create({ model: MODEL, input: PRIVATE_PROMPT, max_output_tokens: 100 });
+      return { accepted: false };
+    } });
+  await f.ready();
+  const mixedSuite = { ...pairedProfiles, profiles: [pairedProfiles.profiles[0], profiles.profiles[0]] };
+  const denied = await request(f.runtime, 'POST', '/runs', { ...f.plan, profileHash: validationHash(mixedSuite) }, f.headers());
+  assert.equal(denied.body.error.code, 'LIVE_VALIDATION_RUN_IDENTITY_MISMATCH');
+  assert.equal(f.counts().providerCreates, 0);
+  await f.admit();
+
+  const groundedBeforeConversation = await f.acceptance(POSITIVE);
+  assert.equal(groundedBeforeConversation.body.error.code, 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
+  const input = f.profile(CONVERSATIONAL).input;
+  const changed = await f.acceptance(CONVERSATIONAL, { input: { ...input, query: { ...input.query, question: 'Unreviewed question' } } });
+  assert.equal(changed.body.error.code, 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
+  assert.equal(f.counts().adapterExecutes, 0);
+
+  const conversation = await f.acceptance(CONVERSATIONAL);
+  assert.equal(conversation.status, 200);
+  assert.equal(conversation.body.profilePassed, false);
+  assert.equal(Object.hasOwn(conversation.body, 'privateAnswer'), false);
+  assert.deepEqual(conversation.body.providerDelta, { providerCalls: 1, generationCalls: 1, auditCalls: 0 });
+  for (const caseId of [CONVERSATIONAL, POSITIVE]) {
+    assert.equal((await f.acceptance(caseId)).body.error.code, 'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
+  }
+  assert.equal(f.counts().adapterExecutes, 1);
+  assert.equal(f.counts().providerCalls, 1);
+  const usage = (await request(f.runtime, 'GET', '/usage', undefined, f.headers())).body;
+  assert.equal(usage.profileHash, validationHash(pairedProfiles));
+  assert.equal(usage.status, 'stopped');
+  assert.ok(usage.usage.reservedSpendMicroUsd > 0);
 });
 
 test('the GTA IV run binds exact case inputs and rejects another reviewed suite without provider calls', async t => {

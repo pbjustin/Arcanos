@@ -7,7 +7,29 @@ deployment.
 
 ## Request flow
 
-For the released hybrid guide workflow, ChatGPT/the frontend discovers public
+A `gaming-hybrid-v2` query that sends
+`semanticAssistance: { version: "gaming-semantic-v1" }` lets ARCANOS choose the
+path before retrieval. Ordinary gameplay questions reach Trinity with the
+original question, request-scoped player context and any short interpretation
+hint. The game may be absent from the registry. If more than one game is
+plausible and the choice changes the answer, ask one targeted question.
+Trinity may qualify uncertain mechanics or progression and should respect
+the player's spoiler and depth choices. A completed conversational answer
+carries `answer.grounding: model_knowledge` and an empty `answer.sources`.
+
+Requests for a specific source, citations, patch facts or live status use the
+grounded workflow. The frontend can reinforce these requirements, including
+in follow-ups, with `evidenceNeed`. A follow-up can refer to a specific link
+already supplied by the player using `requiredSourceUrl`. Each request can
+bind one exact patch scope.
+The backend checks source identity, applicability, CLEAR, coverage and citation
+integrity. When required evidence is unavailable, the workflow requests
+permitted discovery or reports what could be verified. It never switches to a
+conversational answer after a failure. V1 and v2 queries without the opt-in use
+the existing grounded workflow. See the
+[proposed skill update](gpt/arcanos-gaming-semantic-assistance.instructions.md).
+
+For the grounded workflow, ChatGPT/the frontend discovers public
 guide URLs. ARCANOS does not search the web in that workflow: it reads its
 existing corpus, grants bounded candidate submissions, and evaluates the URLs
 actually submitted. A URL-only candidate is sufficient input:

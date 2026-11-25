@@ -65,11 +65,11 @@ import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { readGamingMarkdownCitationDestination } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
-import { checkGamingAnswerIntegrity, isGamingSourcePartiallyExtracted, resolveGamingGuideCitations } from '@services/gamingAnswerIntegrity.js';
+import { checkGamingAnswerIntegrity, checkGamingConversationalAnswerIntegrity, isGamingSourcePartiallyExtracted, resolveGamingGuideCitations } from '@services/gamingAnswerIntegrity.js';
 import { formatGamingGuidePresentation } from '@services/gamingGuidePresentation.js';
 import { GAMING_PRE_LIMITATION_CANDIDATE, GAMING_PRESENTED_ANSWER, type GamingPresentedAnswer } from '@shared/gaming/gamingPresentedAnswerBinding.js';
-import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION } from '@shared/gaming/gamingPromptCore.js';
-import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
+import { GAMING_CLEAR_PRESENTATION_POLICY_VERSION, GAMING_CONVERSATIONAL_SYSTEM_POLICY, type GamingPromptInput } from '@shared/gaming/gamingPromptCore.js';
+import { resolveGamingFreshnessDisposition, type GamingFreshnessRequirement } from '@shared/gaming/gamingQuestionFreshnessPolicy.js';
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -77,6 +77,9 @@ export type GamingPipelineInput = Pick<
 > & GamingPlayerContext & {
   /** Region already validated by the hybrid request contract. */
   region?: string;
+  freshnessRequirement?: GamingFreshnessRequirement;
+  /** Server-selected before retrieval. An empty object still selects conversation. */
+  conversation?: GamingPromptInput['conversation'];
 };
 
 type GamingWebSource = GamingSuccessEnvelope["data"]["sources"][number];
@@ -608,29 +611,11 @@ function buildGamingProviderFallbackResponse(params: {
   });
   return buildGamingRecoveryResponse(recovery);
 }
-function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
-  if (mode === "guide") {
-    return {
-      answerMode: "explained" as const,
-      requestedVerbosity: "normal" as const,
-      strictUserVisibleOutput: true,
-      gamingGuideIntakePolicy: "compact-v1" as const,
-      disableOptionalSideEffects: true,
-      redactAuditContent: true
-    };
-  }
-
-  if (mode === "build") {
-    return {
-      answerMode: "direct" as const,
-      strictUserVisibleOutput: true,
-      disableOptionalSideEffects: true,
-      redactAuditContent: true
-    };
-  }
-
+function buildGamingRunOptions(mode: GamingMode, conversational: boolean) {
+  const researchGuide = mode === "guide" && !conversational;
   return {
-    answerMode: "explained" as const,
+    answerMode: conversational || mode === "build" ? "direct" as const : "explained" as const,
+    ...(researchGuide ? { requestedVerbosity: "normal" as const, gamingGuideIntakePolicy: "compact-v1" as const } : {}),
     strictUserVisibleOutput: true,
     disableOptionalSideEffects: true,
     redactAuditContent: true
@@ -703,7 +688,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
       return url.trim();
     }
   })).size;
-  const freshnessSensitive = isGamingFreshnessSensitive(params);
+  const conversation = params.conversation;
+  if (conversation && (prepared || guideSourceCount > 0 || resolveGamingFreshnessDisposition(params) === 'REQUIRED')) {
+    throw new Error('Conflicting Gaming generation route.');
+  }
+  const freshnessSensitive = !conversation && (Boolean(params.freshnessRequirement) || isGamingFreshnessSensitive(params));
   const suppliedGuideRequired = params.mode === "guide" && guideSourceCount > 0
     && !(params.evidenceOrigin === "frontend_web_search" && freshnessSensitive);
   const baseLogContext: GamingLogContext = {
@@ -719,7 +708,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     guideSourceCount
   };
 
-  logger.info("gaming.request.start", baseLogContext);
+  logger.info("gaming.request.start", { ...baseLogContext, answerMode: conversation ? 'conversation' : 'research' });
   if (params.mode === "guide") {
     logger.info("gaming.guide.policy", {
       ...baseLogContext,
@@ -730,7 +719,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   const shortcutStartedAt = Date.now();
-  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(params.prompt);
+  const exactLiteralShortcut = conversation ? undefined : tryExtractExactLiteralPromptShortcut(params.prompt);
   logGamingIntakeStep(baseLogContext, "shortcut", shortcutStartedAt, {
     ok: Boolean(exactLiteralShortcut)
   });
@@ -793,7 +782,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         suppliedEvidenceSourceCount = new Set(matched.map(receipt => receipt.sourceId)).size;
       }
     }
-  } else try {
+  } else if (!conversation) try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
     runtime?.onRetrieval?.(structuredClone(webContextResult));
     clearKnowledge = webContextResult.clearKnowledge ?? { context: '', sources: [], evidence: [] };
@@ -920,7 +909,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   const resolvedGame = resolvedParams.game;
-  if (resolvedGame && !prepared && !runtime?.skipStoredRetrieval) {
+  if (resolvedGame && !conversation && !prepared && !runtime?.skipStoredRetrieval) {
     const storedRetrievalStartedAt = Date.now();
     const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
     const liveEvidenceContext = omitGamingDiagnosticContextBlocks(webContext, sources);
@@ -1069,8 +1058,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   // A known game is a scope, not a gameplay point. Do not spend an intake call
   // or select a guessed chapter when the request cannot identify safe evidence.
   getRequestAbortSignal()?.throwIfAborted();
-  const progression = assessGamingProgressionRequest(resolvedParams);
-  if (resolvedParams.mode === "guide" && progression.clarificationNeeded) {
+  if (!conversation && resolvedParams.mode === "guide" && assessGamingProgressionRequest(resolvedParams).clarificationNeeded) {
     const clarificationReason: GamingFallbackReason = "INTAKE_RETRIEVAL_FAILED";
     const sourceKnown = storedSourceKnown || retrievalHadUsableSources;
     logger.info("gaming.progress.clarification", {
@@ -1191,7 +1179,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     });
   }
 
-  if (resolvedParams.mode === "guide" && (!retrievalHadUsableSources || selectedChunkCount === 0)) {
+  if (!conversation && resolvedParams.mode === "guide" && (!retrievalHadUsableSources || selectedChunkCount === 0)) {
     const unavailableReason: GamingFallbackReason = fallbackReason ?? "INTAKE_RETRIEVAL_FAILED";
     return formatGameplaySuccessWithLogs({
       mode: resolvedParams.mode,
@@ -1207,28 +1195,31 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   clearKnowledge = { ...clearKnowledge, context: webContext };
   const evidenceContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
     requireRequestCoverage: prepared?.requireRequestCoverage === true };
-  const selectionStartedAt = Date.now();
-  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'started', elapsedMs: 0 });
-  const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, evidenceContext);
-  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'completed', elapsedMs: Date.now() - selectionStartedAt });
-  runtime?.onEvidenceAssessment?.(structuredClone(evidenceAssessment));
-  logger.info('gaming.clear.evidence.completed', {
-    ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
-    policyProfile: evidenceAssessment.policyProfile, subjectHash: evidenceAssessment.subjectHash,
-    assessmentMethod: evidenceAssessment.assessmentMethod, assessmentStatus: evidenceAssessment.assessmentStatus,
-    dimensionScores: evidenceAssessment.dimensionScores, overall: evidenceAssessment.overall,
-    decision: evidenceAssessment.decision, reasonCodes: evidenceAssessment.findings.map(finding => finding.code),
-    blockingFindingCount: evidenceAssessment.blockingFindings.length, providerInvoked: false
-  });
-  if (evidenceAssessment.decision !== 'accept') {
-    const reason: GamingFallbackReason = evidenceAssessment.gates.freshness === 'unknown'
-      ? 'CURRENT_EVIDENCE_UNAVAILABLE' : 'INTAKE_RETRIEVAL_FAILED';
-    return formatGameplaySuccessWithLogs({ mode: params.mode,
-      response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources: [], fallbackReason: reason,
-        sourceKnown: storedSourceKnown }), sources, logContext: baseLogContext, requestStartedAt,
-      grounding: { ...grounding, groundedInSuppliedEvidence: false, groundingStatus: 'insufficient_evidence' },
-      retrievedSourceCount, omittedSourceCount, fallbackReason: reason, discoveryReason, discoveryFailureReason,
-      ...(reason === 'CURRENT_EVIDENCE_UNAVAILABLE' ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) } : {}) });
+  let evidenceAssessment: GamingClearAssessment | undefined;
+  if (!conversation) {
+    const selectionStartedAt = Date.now();
+    observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'started', elapsedMs: 0 });
+    evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, evidenceContext);
+    observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'completed', elapsedMs: Date.now() - selectionStartedAt });
+    runtime?.onEvidenceAssessment?.(structuredClone(evidenceAssessment));
+    logger.info('gaming.clear.evidence.completed', {
+      ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
+      policyProfile: evidenceAssessment.policyProfile, subjectHash: evidenceAssessment.subjectHash,
+      assessmentMethod: evidenceAssessment.assessmentMethod, assessmentStatus: evidenceAssessment.assessmentStatus,
+      dimensionScores: evidenceAssessment.dimensionScores, overall: evidenceAssessment.overall,
+      decision: evidenceAssessment.decision, reasonCodes: evidenceAssessment.findings.map(finding => finding.code),
+      blockingFindingCount: evidenceAssessment.blockingFindings.length, providerInvoked: false
+    });
+    if (evidenceAssessment.decision !== 'accept') {
+      const reason: GamingFallbackReason = evidenceAssessment.gates.freshness === 'unknown'
+        ? 'CURRENT_EVIDENCE_UNAVAILABLE' : 'INTAKE_RETRIEVAL_FAILED';
+      return formatGameplaySuccessWithLogs({ mode: params.mode,
+        response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources: [], fallbackReason: reason,
+          sourceKnown: storedSourceKnown }), sources, logContext: baseLogContext, requestStartedAt,
+        grounding: { ...grounding, groundedInSuppliedEvidence: false, groundingStatus: 'insufficient_evidence' },
+        retrievedSourceCount, omittedSourceCount, fallbackReason: reason, discoveryReason, discoveryFailureReason,
+        ...(reason === 'CURRENT_EVIDENCE_UNAVAILABLE' ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) } : {}) });
+    }
   }
   const client = runtime ? runtime.client : getOpenAIClientOrAdapter().client;
 
@@ -1353,7 +1344,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
               GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS
             ),
             runOptions: {
-              ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              ...buildGamingRunOptions(params.mode, Boolean(conversation)),
               ...(runtime?.onStage ? { onStage: (event: import('@core/logic/trinityTypes.js').TrinityStageObservation) => {
                 if (event.stage === 'intake' || event.stage === 'reasoning' || event.stage === 'final') {
                   observeGamingPipelineStage(runtime, { ...event, stage: event.stage });
@@ -1361,8 +1352,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
               } } : {}),
               gamingPresentationPolicy: GAMING_CLEAR_PRESENTATION_POLICY_VERSION,
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
-              ...(runtime ? { disableOptionalSideEffects: true, redactAuditContent: true, disableMemoryAccess: true } : {}),
-              ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
+              ...(runtime || conversation ? { disableOptionalSideEffects: true, redactAuditContent: true, disableMemoryAccess: true } : {}),
+              ...(conversation ? { directAnswerSystemPolicyPrompt: GAMING_CONVERSATIONAL_SYSTEM_POLICY } : {}),
+              ...(params.mode === "guide" || conversation ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
               ...(retrievalHadUsableSources
                 ? { toolBackedCapabilities: { verifyProvidedData: true } }
@@ -1417,8 +1409,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     }
     trinityResult.result = qualifyAnswer(trinityResult.result);
     const integrity = { prompt: resolvedParams.prompt, knowledge: clearKnowledge, advisory: allowAdvisoryFreshness };
-    let integrityFailure = checkGamingAnswerIntegrity({ answer: trinityResult.result, ...integrity });
-    if (!integrityFailure && resolvedParams.mode === 'guide' && resolvedParams.game) {
+    let integrityFailure = conversation ? checkGamingConversationalAnswerIntegrity(trinityResult.result)
+      : checkGamingAnswerIntegrity({ answer: trinityResult.result, ...integrity });
+    if (!conversation && !integrityFailure && resolvedParams.mode === 'guide' && resolvedParams.game) {
       const candidate = trinityResult.result;
       const formatted = formatGamingGuidePresentation({
         answer: candidate, prompt: resolvedParams.prompt, game: resolvedParams.game,
@@ -1688,9 +1681,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
   });
 
+  if (conversation) {
+    return formatGameplaySuccessWithLogs({ mode: params.mode, response: trinityResult.result, sources: [],
+      logContext: baseLogContext, requestStartedAt, grounding });
+  }
+
   // Revalidate the exact evidence set and applicability after generation.
   const finalEvidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, evidenceContext);
-  if (finalEvidenceAssessment.decision !== 'accept'
+  if (!evidenceAssessment || finalEvidenceAssessment.decision !== 'accept'
     || finalEvidenceAssessment.contextFingerprint !== evidenceAssessment.contextFingerprint
     || finalEvidenceAssessment.subjectHash !== evidenceAssessment.subjectHash) {
     const recoveryReason: GamingFallbackReason = finalEvidenceAssessment.gates.freshness === 'unknown'
