@@ -2595,8 +2595,13 @@ hybrid tools, requires `expectedRevision` on candidate submissions, and returns
 backend selection, coverage and bounded recovery diagnostics. It adds no tool,
 generic invocation path, scope or model selector. The
 [released frontend instructions](gpt/arcanos-gaming-hybrid-v2.instructions.md)
-select v2 for normal guide/build/meta traffic. Updating the same private plugin
-still requires deployed-v2 verification and exact-content owner approval; repository tests do not establish installed acceptance.
+select v2 for normal guide/build/meta traffic. Send
+`semanticAssistance: { "version": "gaming-semantic-v1" }` for ordinary
+conversation. V2 without this opt-in retains the grounded default. The
+authenticated `tools/list` response includes complete input and output schemas
+and is served with `Cache-Control: no-store`. After an authorized rollout,
+refresh tools in the existing app, verify that the semantic fields appear, and
+test from a new chat.
 Direct ingestion/refresh inputs are their existing payloads plus required
 `idempotencyKey`, `storagePolicy`, and literal `confirmStore: true`. Candidate
 ingestion likewise requires affirmative confirmation. Outputs are

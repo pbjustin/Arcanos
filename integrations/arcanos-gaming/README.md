@@ -1,17 +1,17 @@
 # Arcanos Gaming private migration
 
 This is the second consumer of the migration foundation merged in PR #1509.
-It is a private, single-owner Gaming migration. Its backend prerequisite is
-merged and deployed; the draft migration remains blocked by incomplete live
-gameplay acceptance and pending account/package checkpoints. The approved
-baseline can be composed and reviewed locally while those gates remain blocked.
+This directory records the original private, single-owner migration and supports
+local composition from the approved baseline. Its historical connection record
+does not configure the installed plugin or report current OAuth, tool discovery,
+or gameplay acceptance.
 
 The published GPT remains unchanged. Raw configuration, instructions, knowledge
 files, composition output, and future saved archives belong exclusively in
 `.local-migration/arcanos-gaming/`, which is ignored and rejected by the commit
 guard. Never put credentials in those files either.
 
-## Current state
+## Migration record
 
 - [Migration checkpoint](../../docs/chatgpt-migration/gaming/README.md)
 - [Behavior inventory](../../docs/chatgpt-migration/gaming/behavior-inventory.md)
@@ -25,9 +25,8 @@ Backend [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515) merged as
 succeeded worker-first. The bounded read run passed six checks and failed the
 legacy gameplay query; the [connection record](connection.requirements.json)
 preserves that historical result and exact rollout evidence.
-No retry or durable Gaming write occurred. Gaming MCP remains disabled;
-OAuth scopes and principal mapping have local test evidence only. Deployment
-success does not establish fully verified live Gaming behavior.
+No retry or durable Gaming write occurred. Gaming MCP was disabled during that
+run. The retained evidence covers the rollout and its bounded checks.
 
 The connection record's current retained assessment classifies Portal as
 `EXPECTED_NO_EVIDENCE`, with no repair warranted for that request. Its local
@@ -94,19 +93,19 @@ preserved; content approval does not establish live or installed behavior.
 ## Semantic assistance candidate
 
 The [proposed skill update](../../docs/gpt/arcanos-gaming-semantic-assistance.instructions.md)
-documents the new v2 opt-in, the retained grounded workflow, and the release
-order. The current composer and installed skill retain the released baseline.
+documents the v2 opt-in, the retained grounded workflow, and the release
+order. The composer still uses the released baseline.
 Compose any new private candidate separately from its approved exact bytes
 and review the resulting complete candidate hash before any installation.
 
 ## Package boundary
 
-No app ID or installable package is supplied yet. The future package has one
-Gaming skill and one separately registered Gaming backend app. The backend app
-is required for evidence-backed Gaming execution; clarify and present results
-locally where the approved workflow calls for that. No other plugin app belongs
-in the mapping. The approved baseline has zero knowledge files; the expected
-reference count is zero, subject to actual migrated-artifact reconciliation.
+The package pairs one Gaming skill with one separately registered private app.
+The app discovers its tool schemas from the Gaming MCP endpoint. Skill content
+guides tool use and presentation. After rolling out a contract change, use
+**Refresh tools** on the existing app to update that discovered catalog, then
+confirm the new fields in a fresh chat. This step preserves the app binding and
+OAuth connection. See [OpenAI metadata refresh](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata).
 
 Composition must bind the owner-approved baseline fingerprint, preserve its
 hybrid-first state machine, replace fixed Action names with fixed Gaming MCP

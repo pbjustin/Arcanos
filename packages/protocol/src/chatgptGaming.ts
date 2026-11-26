@@ -27,6 +27,11 @@ function resolveSchema(schema: JsonSchema, compactOutput = false): JsonSchema & 
   // Tool descriptions and the canonical contract carry revision and discovery guidance.
   // Retain the input operation-key rule next to the key.
   function compact(value: unknown, field?: string): unknown {
+    // Preserve JSON Schema match semantics for clients that match the entire argument.
+    if (!compactOutput && field === 'pattern') {
+      if (value === '\\S') return '^[\\s\\S]*\\S[\\s\\S]*$';
+      if (value === '^https://') return '^https://[\\s\\S]*$';
+    }
     if (Array.isArray(value)) return value.map(child => compact(child, field));
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'description'

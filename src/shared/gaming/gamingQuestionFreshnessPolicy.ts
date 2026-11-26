@@ -8,6 +8,7 @@ type GamingFreshnessRequest = { prompt: string; mode?: string; requestedVersion?
 export function classifyGamingQuestionFreshness(input: GamingFreshnessRequest): GamingQuestionFreshness {
   const prompt = input.prompt.slice(0, 8_000);
   if (input.freshnessRequirement === 'live_status'
+    || /\b(?:is|are)\s+(?:the\s+)?servers?\s+(?:up|back)(?=\s*(?:[?!.;,]|$))/iu.test(prompt)
     || /\b(?:are\s+)?servers?\s+(?:back\s+up|up\s+yet|up\s+right\s+now)\b/iu.test(prompt)
     || /\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
     || /\bmaintenance\b[^?!.\n]{0,40}\b(?:end(?:s|ed)?|start(?:s|ed)?|begin(?:s)?|finish(?:es|ed)?|scheduled)\b[^?!.\n]{0,30}\b(?:now|today|currently|tonight|tomorrow)\b/iu.test(prompt)

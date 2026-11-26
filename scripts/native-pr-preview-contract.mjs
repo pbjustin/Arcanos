@@ -26,7 +26,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofVersion: 'chatgpt-gaming-mcp-core/v1',
     compositionProofHeader: 'x-arcanos-preview-gaming-composition-version',
     compositionProofVersion: 'gaming-instruction-sections/v1',
-    catalogSha256: '720c0180299612887351809d2b9e20e6bad9071a993aad501e69672c1b338fa1', // gitleaks:allow -- public synthetic catalog digest
+    catalogSha256: '0f608907783ebc87910f6986f27fba10f2809fa454cde974a9fcad55af986df2', // gitleaks:allow -- public synthetic catalog digest
     protocolVersion: '2025-03-26',
     instructions: 'Synthetic Gaming preview only. Fixed query/hybrid fixtures; all writes denied. No OAuth, live providers, source acquisition or storage.',
     game: 'Synthetic Canal Adventure',
