@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { Ajv } from 'ajv';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { chatGptGamingSchemas, CHATGPT_GAMING_TOOL_NAMES } from '@arcanos/protocol/chatgptGaming';
 import { isGamingMcpInput, isGamingMcpOutput, gamingMcpTools } from '../src/shared/chatgpt/gamingMcpContract.js';
 
@@ -6,6 +8,9 @@ import { GAMING_HYBRID_LIMITS, GAMING_HYBRID_V2_LIMITS, GAMING_HYBRID_RELEASED_C
 
 const openapi = JSON.parse(readFileSync(new URL('../contracts/arcanos_gaming.openapi.v1.json', import.meta.url), 'utf8'));
 const contract = JSON.parse(readFileSync(new URL('../packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json', import.meta.url), 'utf8'));
+const gamingInputSchemaValidator = new Ajv({ validateFormats: false });
+// Do not rely on Ajv's draft-07 compatibility extension when checking MCP discovery.
+const mcpSchemaValidator = new Ajv2020({ strict: false, validateFormats: false }).removeKeyword('dependencies');
 describe('Gaming MCP contracts preserve the service contract', () => {
   it('selects released v2 for normal traffic while explicitly retaining legacy v1', () => {
     expect(GAMING_HYBRID_RELEASED_CONTRACT_VERSION).toBe('gaming-hybrid-v2');
@@ -85,8 +90,29 @@ describe('Gaming MCP contracts preserve the service contract', () => {
     }
   });
   it('keeps catalog bounded and distinct from private instructions or registration', () => {
-    expect(Buffer.byteLength(JSON.stringify(gamingMcpTools))).toBeLessThan(65_536);
+    const discovery = { jsonrpc: '2.0', id: 'gaming-preview', result: { tools: gamingMcpTools } };
+    expect(Buffer.byteLength(JSON.stringify(discovery))).toBeLessThan(65_536);
     expect(JSON.stringify(gamingMcpTools)).not.toMatch(/asdk_app_|ARCANOS_GAMING_SOURCE_ACCESS_TOKEN|arcanos:tutor/u);
+  });
+
+  it.each([
+    ['arcanos_gaming_hybrid_query', {
+      contractVersion: 'gaming-hybrid-v2', game: 'Elden Ring', question: 'How do I upgrade it?',
+      idempotencyKey: 'connector-query-fixture',
+      semanticAssistance: { version: 'gaming-semantic-v1', interpretation: 'Use the sword discussed earlier. ' }
+    }],
+    ['arcanos_gaming_ingest_sources', {
+      game: 'Elden Ring', sourceUrls: ['https://guides.example.org/reference'],
+      storagePolicy: 'ask_before_store', confirmStore: true, idempotencyKey: 'connector-storage-fixture'
+    }]
+  ] as const)('advertises %s inputs compatible with whole-string connector validation', (name, input) => {
+    const tool = gamingMcpTools.find(tool => tool.name === name)!;
+    expect(isGamingMcpInput(name, input)).toBe(true);
+    // The server uses search-style JSON Schema patterns. A connector may
+    // require the entire value to match each advertised pattern.
+    const serialized = JSON.stringify(tool.inputSchema, (key, value) =>
+      key === 'pattern' ? `^(?:${String(value)})(?![\\s\\S])` : value);
+    expect(gamingInputSchemaValidator.compile(JSON.parse(serialized))(input)).toBe(true);
   });
 });
 
@@ -104,6 +130,15 @@ const v2Response = { statusCode: 200, result: { contractVersion: 'gaming-hybrid-
     remainingTotalAcquisitionMs: 18_000, remainingCandidateUrls: 4 } } };
 
 describe('explicit Gaming hybrid v2 contract compatibility', () => {
+  it('preserves paired clarification fields in the MCP default schema dialect', () => {
+    const validate = mcpSchemaValidator.compile(chatGptGamingSchemas.arcanos_gaming_hybrid_query.input);
+    expect(validate(v2Query)).toBe(true);
+    expect(validate({ ...v2Query, workflowId, expectedRevision: 0 })).toBe(true);
+    expect(validate({ ...v2Query, workflowId })).toBe(false);
+    expect(validate({ ...v2Query, expectedRevision: 0 })).toBe(false);
+    expect(validate({ ...v2Query, contractVersion: 'gaming-hybrid-v1', workflowId, expectedRevision: 0 })).toBe(false);
+  });
+
   it('opts into v2 without changing the v1 submission or acquisition limits', () => {
     expect(GAMING_HYBRID_LIMITS).toMatchObject({ discoveryRounds: 1, candidates: 3, candidateTimeoutMs: 12_000, currentnessRounds: 1 });
     expect(GAMING_HYBRID_V2_LIMITS).toMatchObject({ discoveryRounds: 2, candidates: 3, totalCandidateUrls: 6,
@@ -196,9 +231,15 @@ describe('explicit Gaming hybrid v2 contract compatibility', () => {
       freshnessStatus: 'not_applicable', revision: 0, selectedCandidateIds: [], selectedEvidenceIds: [],
       coverageSatisfied: false, missingCoverage: [], gapAssessmentStatus: 'not_assessed', requirementSupport: [], answer };
     const output = { statusCode: 200, result };
+    const withCitations = { ...output, result: { ...result,
+      answer: { ...answer, sources: [{ url: 'https://guides.example.org/unverified' }] } } };
+    const validateMcpOutput = mcpSchemaValidator.compile(chatGptGamingSchemas.arcanos_gaming_hybrid_query.output);
     expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', output)).toBe(true);
-    expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', { ...output,
-      result: { ...result, answer: { ...answer, sources: [{ url: 'https://guides.example.org/unverified' }] } } })).toBe(false);
+    expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', withCitations)).toBe(false);
+    expect(validateMcpOutput(output)).toBe(true);
+    expect(validateMcpOutput(withCitations)).toBe(false);
+    const { grounding: _grounding, ...groundedAnswer } = withCitations.result.answer;
+    expect(validateMcpOutput({ ...output, result: { ...result, answer: groundedAnswer } })).toBe(true);
     expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', { ...output,
       result: { contractVersion: 'gaming-hybrid-v1', requestId: result.requestId, state: result.state, nextAction: result.nextAction,
         reason: result.reason, sourceKnown: false, evidenceSelected: false, freshnessStatus: result.freshnessStatus, answer } })).toBe(false);
@@ -252,7 +293,7 @@ describe('explicit Gaming hybrid v2 contract compatibility', () => {
     }
   });
 
-  it('keeps schema transport compaction limited to non-validating documentation annotations', () => {
+  it('preserves canonical validation apart from equivalent whole-string input patterns', () => {
     const canonical = contract.tools.arcanos_gaming_submit_candidates.output;
     expect(chatGptGamingSchemas.arcanos_gaming_submit_candidates.output.properties).toEqual(canonical.properties);
     const withoutDescriptions = (value: unknown): unknown => {
@@ -261,9 +302,15 @@ describe('explicit Gaming hybrid v2 contract compatibility', () => {
       return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'description')
         .map(([key, child]) => [key, withoutDescriptions(child)]));
     };
+    const inputPatterns = new Map([
+      ['^[\\s\\S]*\\S[\\s\\S]*$', '\\S'],
+      ['^https://[\\s\\S]*$', '^https://']
+    ]);
     for (const name of CHATGPT_GAMING_TOOL_NAMES) {
       for (const direction of ['input', 'output'] as const) {
-        const schema = chatGptGamingSchemas[name][direction];
+        const published = chatGptGamingSchemas[name][direction];
+        const schema = direction === 'input' ? JSON.parse(JSON.stringify(published, (key, value) =>
+          key === 'pattern' ? inputPatterns.get(value) ?? value : value)) as typeof published : published;
         const { $defs: definitions = {}, ...root } = schema;
         const declaration = contract.tools[name][direction];
         const canonicalRoot = declaration.$ref ? contract.$defs[declaration.$ref.split('/').at(-1)] : declaration;

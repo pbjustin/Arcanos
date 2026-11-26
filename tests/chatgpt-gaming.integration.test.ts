@@ -314,8 +314,11 @@ describe('Gaming MCP HTTP boundary', () => {
   it('initializes and lists exactly eight scoped tools with distinct write annotations', async () => {
     const application = app(); const authorization = 'Bearer ' + await token();
     const initialized = await post(application).set('Authorization', authorization).send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'fixture', version: '1' } } }).expect(200);
-    expect(initialized.body.result.serverInfo.name).toBe('arcanos-gaming-private');
+    expect(initialized.body.result.serverInfo).toEqual({ name: 'arcanos-gaming-private', version: '1.1.0' });
+    expect(initialized.body.result.instructions).toContain('semanticAssistance.version=gaming-semantic-v1');
+    expect(initialized.body.result.instructions).toContain('current expectedRevision');
     const listed = await post(application).set('Authorization', authorization).send({ jsonrpc: '2.0', id: 2, method: 'tools/list' }).expect(200);
+    expect(listed.headers['cache-control']).toBe('no-store');
     expect(listed.body.result.tools).toEqual(gamingMcpTools);
     expect(listed.body.result.tools.filter((tool: { annotations: { readOnlyHint: boolean } }) => !tool.annotations.readOnlyHint)).toHaveLength(5);
   });

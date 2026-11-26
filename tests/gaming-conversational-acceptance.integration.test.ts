@@ -1,5 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import express from 'express';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import request from 'supertest';
@@ -143,7 +147,7 @@ function harness() {
     expect(isGamingMcpOutput(name, output.structuredContent)).toBe(true);
     return output.structuredContent as { statusCode: number; result: GamingHybridResponse };
   }
-  return { query, queryInput, submit, invoke, retrieve, discover };
+  return { app, query, queryInput, submit, invoke, retrieve, discover };
 }
 
 const conversations = [
@@ -173,6 +177,10 @@ const conversations = [
     answer: 'Retract hardpoints, landing gear, and the cargo scoop. If the ship is mass locked, fly clear of the station before engaging the Frame Shift Drive.' },
   { game: 'Elite Dangerous', question: 'Where can I find sources of Tritium?', interpretation: 'Ask where to obtain the in-game fuel.',
     context: {}, answer: 'Check commodity markets for Tritium. If your platform or game mode changes the options, tell me which you are using.' },
+  { game: 'Moonspindle Cartographer', question: 'The quest calls the NPC the Wandering Guide. Find me the Wandering Guide.',
+    interpretation: 'The player wants to locate the quest NPC.',
+    context: {},
+    answer: 'Which area does the quest marker point to? That will help narrow down where to look for the Wandering Guide.' },
   { game: 'Moonspindle Cartographer', question: 'What’s a beginner route if I only have a paper kite? Either way how do I get back?',
     interpretation: 'Ask for a conditional beginner route and a return path in an unregistered game.',
     context: {},
@@ -180,6 +188,71 @@ const conversations = [
 ];
 
 describe('authenticated Gaming conversation', () => {
+  it('discovers and executes the semantic contract through the authenticated MCP SDK', async () => {
+    const run = harness();
+    const server = createServer(run.app).listen(0, '127.0.0.1');
+    const client = new Client({ name: 'gaming-semantic-fixture', version: '1.0.0' });
+    try {
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a loopback listener.');
+      const origin = `http://127.0.0.1:${address.port}`;
+      await client.connect(new StreamableHTTPClientTransport(new URL(origin + GAMING_MCP_PATH), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        fetch: (target, init) => {
+          expect(new URL(target instanceof Request ? target.url : String(target)).origin).toBe(origin);
+          return fetch(target, { ...init, redirect: 'error' });
+        }
+      }));
+      const name = 'arcanos_gaming_hybrid_query';
+      const tool = (await client.listTools()).tools.find(item => item.name === name);
+      expect(tool?.inputSchema.properties).toMatchObject({
+        semanticAssistance: {
+          required: ['version'],
+          properties: {
+            version: { enum: [semanticVersion] },
+            interpretation: { type: 'string' },
+            evidenceNeed: { enum: ['required', 'specific_source', 'current_patch', 'live_status'] },
+            requiredSourceUrl: { type: 'string', format: 'uri' }
+          }
+        },
+        workflowId: { type: 'string', format: 'uuid' },
+        expectedRevision: { type: 'integer' }
+      });
+      expect(tool?.outputSchema).toBeDefined();
+
+      const answer = 'Keep your equipped weight below 70 percent of your maximum equipment load.';
+      completeWith(answer);
+      const result = await client.callTool({ name, arguments: run.queryInput() });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ statusCode: 200, result: {
+        frontendOutcome: 'answer_ready', workflowId: expect.any(String), revision: 0,
+        answer: { grounding: 'model_knowledge', sources: [], response: answer }
+      } });
+      expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.structuredContent) }]);
+      expect(run.retrieve).not.toHaveBeenCalled();
+
+      const research = await client.callTool({ name, arguments: run.queryInput({
+        idempotencyKey: 'signed-research-fixture',
+        semanticAssistance: { version: semanticVersion, evidenceNeed: 'required' }
+      }) });
+      expect(research.isError).not.toBe(true);
+      expect(research.structuredContent).toMatchObject({ statusCode: 200, result: {
+        frontendOutcome: 'need_new_source', nextAction: 'search', searchHint: expect.stringMatching(/Elden Ring.*guide/iu),
+        workflowId: expect.any(String), revision: 0, evidenceSelected: false
+      } });
+      expect(research.content).toEqual([{ type: 'text', text: JSON.stringify(research.structuredContent) }]);
+      expect(run.retrieve).toHaveBeenCalledTimes(1);
+      expect(trinity).toHaveBeenCalledTimes(1);
+    } finally {
+      try { await client.close(); }
+      finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
+    }
+  });
+
   it.each(conversations)('answers $game gameplay without evidence: $question', async scenario => {
     const run = harness();
     completeWith(scenario.answer);
@@ -226,7 +299,9 @@ describe('authenticated Gaming conversation', () => {
 
   it.each([
     'Explain heavy rolling with reference to equipment load.',
-    'Do not search the web. Explain heavy rolling.'
+    'Do not search the web. Explain heavy rolling.',
+    'Do not use that guide. How do I avoid heavy rolling?',
+    "Don't look up a guide. How do I avoid heavy rolling?"
   ])('answers from model knowledge and preserves player context and explanatory prose: %s', async question => {
     const run = harness();
     const answer = 'According to what you described, you may be heavy rolling. Roll speed changes according to equipped weight.';
@@ -234,6 +309,22 @@ describe('authenticated Gaming conversation', () => {
     const final = await run.query({ question });
     expect(final.result.answer).toMatchObject({ response: answer, sources: [], grounding: 'model_knowledge' });
     expect(trinity.mock.calls[0][0].input.prompt).toContain(question);
+    expect(run.retrieve).not.toHaveBeenCalled();
+  });
+
+  it('lets Trinity ask one focused question when a follow-up does not identify its subject', async () => {
+    const run = harness();
+    const question = 'Should I switch it?';
+    const clarification = 'Which weapon are you considering switching away from?';
+    completeWith(clarification);
+    const result = await run.query({ question });
+    expect(result).toMatchObject({ statusCode: 200, result: { frontendOutcome: 'answer_ready', nextAction: 'answer',
+      answer: { response: clarification, grounding: 'model_knowledge', sources: [] } } });
+    expect(result.result.discovery).toBeUndefined();
+    expect(trinity).toHaveBeenCalledTimes(1);
+    const provider = trinity.mock.calls[0][0];
+    expect(provider.input.prompt).toContain(question);
+    expect(provider.context.runOptions?.directAnswerSystemPolicyPrompt).toContain('ask one focused question');
     expect(run.retrieve).not.toHaveBeenCalled();
   });
 
@@ -306,8 +397,21 @@ describe('authenticated Gaming conversation', () => {
 });
 
 describe('explicit Gaming research with semantic assistance', () => {
+  it.each(['Are the servers up?', 'Are the servers back?'])('requires evidence for the short live-status request %s', async question => {
+    const run = harness();
+    completeWith('The servers are up.');
+    const result = await run.query({ game: 'Elite Dangerous', question });
+    expect(result.result).toMatchObject({ state: 'discovery_required', evidenceSelected: false });
+    expect(result.result.answer).toBeUndefined();
+    expect(run.retrieve).toHaveBeenCalledTimes(1);
+    expect(trinity).not.toHaveBeenCalled();
+  });
+
   it.each([
     { question: 'Find and cite a source for avoiding heavy rolling in Elden Ring.' },
+    { question: 'Find me a guide to avoiding heavy rolling in Elden Ring.' },
+    { question: 'Find me an Elden Ring beginner guide for equipment load.' },
+    { question: 'Find me an Elden Ring beginner guide on equipment load.' },
     { question: 'Explain heavy rolling with references.' },
     { question: 'Search the web for an explanation of heavy rolling.' },
     { question: 'Search the internet for an explanation of heavy rolling.' },
@@ -387,6 +491,42 @@ describe('explicit Gaming research with semantic assistance', () => {
     expect(trinity).not.toHaveBeenCalled();
   });
 
+  it('clarifies a material playstyle choice and resumes the same signed workflow at the expected revision', async () => {
+    const run = harness();
+    const url = 'https://guides.example.org/acceptance/early-samurai';
+    pages.set(new URL(url).pathname, readFileSync(new URL('./fixtures/gaming-samurai-guide.html', import.meta.url), 'utf8'));
+    const input = {
+      question: "Recommend an early-game Samurai katana build. I'm undecided between bleed and pure Dexterity.",
+      class: 'Samurai', mode: 'build', progressPoint: 'just exited the tutorial',
+      semanticAssistance: { version: semanticVersion, evidenceNeed: 'specific_source', requiredSourceUrl: url }
+    };
+    const initial = await run.query(input);
+    const clarified = await run.submit(initial.result, [url]);
+    expect(clarified.result).toMatchObject({ workflowId: initial.result.workflowId, revision: 1,
+      frontendOutcome: 'clarification_required', nextAction: 'clarify', evidenceSelected: true,
+      clarification: 'Do you prefer bleed or pure Dexterity?' });
+    expect(trinity).not.toHaveBeenCalled();
+
+    const continuation = { ...input, workflowId: clarified.result.workflowId, expectedRevision: clarified.result.revision,
+      idempotencyKey: 'semantic-clarification-001', constraints: ['pure Dexterity'] };
+    const stale = await run.query({ ...continuation, expectedRevision: initial.result.revision });
+    expect(stale).toMatchObject({ statusCode: 409, result: { reason: 'STALE_WORKFLOW_REVISION', revision: 1 } });
+    const conflict = await run.query({ ...continuation, semanticAssistance: undefined });
+    expect(conflict).toMatchObject({ statusCode: 409, result: { reason: 'QUERY_CONTEXT_CONFLICT', revision: 1 } });
+    expect(conflict.result.answer).toBeUndefined();
+    expect(trinity).not.toHaveBeenCalled();
+
+    completeWith('Keep the Samurai starting Uchigatana katana with Unsheathe. Prioritize Vigor toward 20 and Dexterity later. Upgrade with ordinary Smithing Stones in Limgrave. [Source 1]');
+    const resumed = await run.query(continuation);
+    expect(resumed).toMatchObject({ statusCode: 200, result: { workflowId: clarified.result.workflowId, revision: 2,
+      frontendOutcome: 'answer_ready', nextAction: 'answer', evidenceSelected: true, answer: { sources: [{ url }] } } });
+    expect(resumed.result.selectedEvidenceIds).toEqual(clarified.result.selectedEvidenceIds);
+    expect(await run.query(continuation)).toEqual(resumed);
+    expect(run.retrieve).toHaveBeenCalledTimes(1);
+    expect(fetchDocument).toHaveBeenCalledTimes(1);
+    expect(trinity).toHaveBeenCalledTimes(1);
+  });
+
   it('binds citations to selected evidence and omits acquired instructions', async () => {
     const run = harness();
     const url = fixture('equipment-load');
@@ -410,6 +550,20 @@ describe('explicit Gaming research with semantic assistance', () => {
     const initial = await run.query({ semanticAssistance: { version: semanticVersion, evidenceNeed: 'current_patch' } });
     const final = await run.submit(initial.result, [fixture('equipment-load')]);
     expect(final.result).toMatchObject({ state: 'discovery_required', nextAction: 'verify_currentness', freshnessStatus: 'unverified' });
+    expect(final.result.answer).toBeUndefined();
+    expect(trinity).not.toHaveBeenCalled();
+  });
+
+  it('requires both the exact supplied guide and currentness corroboration in a follow-up', async () => {
+    const run = harness();
+    const url = fixture('equipment-load') + '?edition=base&section=roll';
+    const initial = await run.query({ question: defaultQuestion,
+      semanticAssistance: { version: semanticVersion, evidenceNeed: 'current_patch', requiredSourceUrl: url,
+        interpretation: 'The player wants to verify whether the supplied rolling guidance still applies.' } });
+    expect(initial.result).toMatchObject({ reason: 'REQUIRED_SUPPLIED_GUIDE_UNAVAILABLE', evidenceSelected: false });
+    const final = await run.submit(initial.result, [url]);
+    expect(final.result).toMatchObject({ state: 'discovery_required', nextAction: 'verify_currentness',
+      freshnessStatus: 'unverified', candidates: [expect.objectContaining({ url })] });
     expect(final.result.answer).toBeUndefined();
     expect(trinity).not.toHaveBeenCalled();
   });

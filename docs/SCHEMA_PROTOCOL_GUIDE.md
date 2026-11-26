@@ -11,7 +11,7 @@ Its bundle stays in a dedicated subdirectory; the daemon's flat tool discovery
 continues to load only the existing input/output schema pairs.
 See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
 
-The sealed Gaming MCP preview pins the exact eight-tool catalog at 65,406 JSON
+The sealed Gaming MCP preview pins the exact eight-tool catalog at 65,347 JSON
 bytes and its SHA-256, including v2 revision, recovery and
 semantic-assistance fields. Tool names, query/write OAuth scopes and consent
 checks retain their existing authority.
@@ -19,6 +19,10 @@ The complete catalog and JSON-RPC envelope fit the unchanged 65,536-byte served
 and verifier response caps. Catalog description, schema or scope drift still
 fails verification; the preview does not truncate schemas or prove production
 activation, installed-client behavior or an OAuth grant.
+The compiled protocol package supplies discovery and server validation from the
+same schema. Published input patterns support whole-string matching without
+changing accepted values. Shared conditionals enforce paired workflow revisions
+and citation-free model answers in both draft-07 and MCP's default 2020-12 dialect.
 
 The Gaming hybrid Action contract is an additive module HTTP contract in
 [`contracts/arcanos_gaming.openapi.v1.json`](../contracts/arcanos_gaming.openapi.v1.json),

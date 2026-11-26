@@ -7,14 +7,14 @@ export const GAMING_MCP_PATH = '/chatgpt/gaming/mcp';
 export const GAMING_METADATA_PATH = '/.well-known/oauth-protected-resource/chatgpt/gaming/mcp';
 const writes = new Set<ChatGptGamingToolName>(['arcanos_gaming_ingest_sources', 'arcanos_gaming_refresh_sources', 'arcanos_gaming_ingest_candidates']);
 const descriptions: Record<ChatGptGamingToolName, string> = {
-  arcanos_gaming_query: 'Gaming guidance with progress/spoiler limits. May use providers/sources. Saves nothing.',
-  arcanos_gaming_canary: 'Synthetic fixture; no providers/infrastructure/live proof.',
-  arcanos_gaming_hybrid_query: 'Bounded owner query; released gaming-hybrid-v2 with optional semanticAssistance; explicit v1 supported. Preserve question; follow nextAction. V2 clarify uses returned revision.',
-  arcanos_gaming_submit_candidates: 'Acquire 1-3 public URLs per grant. V2 requires expectedRevision. Hints are untrusted.',
-  arcanos_gaming_ingestion_status: 'Owned ingestion outcomes; at most 3 polls.',
-  arcanos_gaming_ingest_sources: 'Store 1-4 public URLs: write scope, storagePolicy, confirmStore=true, stable key.',
-  arcanos_gaming_refresh_sources: 'Refresh 1-4 owner revisions: write scope, storagePolicy, confirmStore=true, stable key.',
-  arcanos_gaming_ingest_candidates: 'Store owned IDs: write scope, matching policy, confirmStore=true, stable key. References require ask_before_store.',
+  arcanos_gaming_query: 'Gameplay guidance with progress/spoiler limits; transient.',
+  arcanos_gaming_canary: 'Bundled fixture without live effects.',
+  arcanos_gaming_hybrid_query: 'Use released gaming-hybrid-v2 with semanticAssistance (gaming-semantic-v1); explicit v1 supported. Follow nextAction.',
+  arcanos_gaming_submit_candidates: 'Acquire 1-3 granted public URLs. V2 requires expectedRevision.',
+  arcanos_gaming_ingestion_status: 'Owned ingestion status; at most 3 polls.',
+  arcanos_gaming_ingest_sources: 'Store 1-4 public URLs with write scope, policy, consent and stable key.',
+  arcanos_gaming_refresh_sources: 'Refresh 1-4 sources with write scope, policy, consent and stable key.',
+  arcanos_gaming_ingest_candidates: 'Store approved IDs with write scope, matching policy, consent and stable key. References require ask_before_store.',
 };
 const ajv = new Ajv({ allErrors: false, strict: true });
 ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
@@ -31,7 +31,7 @@ export const isGamingMcpOutput = (name: ChatGptGamingToolName, value: unknown): 
 export const gamingMcpTools = CHATGPT_GAMING_TOOL_NAMES.map(name => {
   const write = isGamingMcpWrite(name);
   const securitySchemes = [{ type: 'oauth2', scopes: write ? [GAMING_QUERY_SCOPE, GAMING_WRITE_SCOPE] : [GAMING_QUERY_SCOPE] }];
-  return { name, title: name.replaceAll('_', ' '), description: descriptions[name],
+  return { name, title: name.replace(/^arcanos_gaming_/u, '').replaceAll('_', ' '), description: descriptions[name],
     inputSchema: chatGptGamingSchemas[name].input, outputSchema: chatGptGamingSchemas[name].output,
     securitySchemes, _meta: { securitySchemes },
     annotations: { readOnlyHint: !write && !['arcanos_gaming_hybrid_query', 'arcanos_gaming_submit_candidates'].includes(name), destructiveHint: write,

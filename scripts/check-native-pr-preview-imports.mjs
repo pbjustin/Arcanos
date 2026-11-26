@@ -953,7 +953,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingPreferenceData.ts', '4372c4d9278ea6533a4b53bc60974b465bdeb0313203fd169f3f7c532bfc7cd1'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGameRegistryData.ts', '337a3bad065684033f58a44132ffb99aa6f52a28d9c112dac52d8218d10d91c0'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGameRegistry.ts', '77a6ec596d28699ffd373905919e5924d4258fc4c74b3dbf9587216b08b62e2a'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'cd03128a46d0dc75dbd4c9f13ccfc8afe7469dcb7386bb7ff708dcaa7653a97a'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'a40d534a560a22bb2cba1fbbffd7dbb070cabe513422f398d313412defff521f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGenerationBudgetCore.ts', '6e31fc183f8450d645933aaabef946851aac2d5a807d564d92bb11a27edcd6e6'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingExecutionBudgetCore.ts', '8409207a0ff4ab57efc15e6837cd924b0441d5e63595c101d394acb334955e0d'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts', '84711a1814ecfc3f598fc6643104126f18327ccd434354b43d61b09c5a42d2a4'], // gitleaks:allow -- public source semantic SHA-256
@@ -963,12 +963,12 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/skill-composition-core.d.mts', '08ca7185c7242734ab7015259990da9dd7eeec38432139a9eaecf03257c8810f'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/skill-composition-core.mjs', '669365ee5906d523ab1f841d4d25a5086ee8669f152eadfe01e466d939147982'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingCompositionPreviewFixture.ts', '5c66dd4fb92143ea053c59663c845252324fd69e1c4709c47484eeb6e7bf7a45'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '7ae2714f6102d3061d6cf61d2ee20d1c4fd6f2cd78f80ab0e2038558f5d9923f'],
+  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '1b983757892d341f019a3ae635fa78c6d8555920e1e8a2bb4e0bf58ea02ccb1f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/arcanosBehavioralProfile.ts', '2ac9faec4f59794867bbbc700a618812e1b9f81752a3f016044d4704ee770c4f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyCore.ts', 'a1bf993ad54ac0a2abd5c1e0a744c9b8e6167164a104e1cb64ef2a61b4784107'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/chatgpt/gamingMcpContract.ts', '78ee84510ae17d393311daee502383f3d440057e25ee6e2a13ff41626560cb6a'],
-  ['packages/protocol/src/chatgptGaming.ts', '8a32db30c7b584d7ae4364886dbe1f3d2e556e5c6c9a05a81fee655415ac9099'],
+  ['src/shared/chatgpt/gamingMcpContract.ts', '1519c1256ccf1579c95ab0491d29cef8e48a609bce99b12e026ced7bd08bc615'], // gitleaks:allow -- public source semantic SHA-256
+  ['packages/protocol/src/chatgptGaming.ts', '1968954b9a7434687d24fa5d2b4b0285095a932c7f24f287fa2c81a6a2f0641e'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/pluginMigrationPreviewFixture.ts', 'c723fbc47ff3faf54ada2c46b991ddcddc7b781076100335d3379c9fb9791b92'], // gitleaks:allow -- public source semantic SHA-256

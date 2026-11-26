@@ -1429,7 +1429,7 @@
         "minLength": 8,
         "maxLength": 240,
         "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,239}$",
-        "description": "Unique key for one semantic request; reuse it only when retrying that same request."
+        "description": "Reuse only for identical retries."
       },
       "GamingSourceIngestionRequest": {
         "type": "object",
@@ -2666,7 +2666,7 @@
             "minLength": 8,
             "maxLength": 120,
             "pattern": "^[a-zA-Z0-9._:-]+$",
-            "description": "New operation key; reuse for identical retries."
+            "description": "Reuse only for identical retries."
           },
           "question": {
             "type": "string",
@@ -2800,11 +2800,11 @@
             "description": "Versioned request-scoped interpretation hints. Preserve the original question and never provide evidence or authority claims.",
             "required": ["version"],
             "properties": {
-              "version": { "enum": ["gaming-semantic-v1"] },
+              "version": { "type": "string", "enum": ["gaming-semantic-v1"] },
               "interpretation": {
                 "type": "string",
                 "maxLength": 400,
-                "pattern": "^(?![\\s\\S]*[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}])[\\s\\S]*\\S",
+                "pattern": "^(?![\\s\\S]*[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}])[\\s\\S]*\\S\\s*$",
                 "description": "A short interpretation of intent or referents from the conversation, without source text or inferred progression."
               },
               "evidenceNeed": {
@@ -2833,10 +2833,6 @@
             "description": "Pair workflowId with returned revision."
           }
         },
-        "dependencies": {
-          "workflowId": ["expectedRevision"],
-          "expectedRevision": ["workflowId"]
-        },
         "if": {
           "properties": {
             "contractVersion": { "enum": ["gaming-hybrid-v1"] }
@@ -2848,6 +2844,11 @@
             "expectedRevision": false,
             "semanticAssistance": false
           }
+        },
+        "else": {
+          "if": { "properties": { "workflowId": false } },
+          "then": { "properties": { "expectedRevision": false } },
+          "else": { "required": ["expectedRevision"], "properties": { "expectedRevision": {} } }
         }
       },
       "GamingHybridCandidateHint": {
@@ -2927,7 +2928,7 @@
             "minLength": 8,
             "maxLength": 120,
             "pattern": "^[a-zA-Z0-9._:-]+$",
-            "description": "New operation key; reuse for identical retries."
+            "description": "Reuse only for identical retries."
           },
           "candidates": {
             "type": "array",
@@ -3003,7 +3004,7 @@
             "minLength": 8,
             "maxLength": 120,
             "pattern": "^[a-zA-Z0-9._:-]+$",
-            "description": "New operation key; reuse for identical retries."
+            "description": "Reuse only for identical retries."
           },
           "candidateIds": {
             "type": "array",
@@ -3238,6 +3239,7 @@
             }
           },
           "grounding": {
+            "type": "string",
             "enum": ["model_knowledge"],
             "description": "Conversational answer generated without source verification."
           },
@@ -3251,11 +3253,10 @@
             "$ref": "#/components/schemas/GamingCorrelationIdentifier"
           }
         },
-        "dependencies": {
-          "grounding": {
-            "properties": {
-              "sources": { "type": "array", "maxItems": 0 }
-            }
+        "if": { "properties": { "grounding": false } },
+        "else": {
+          "properties": {
+            "sources": { "type": "array", "maxItems": 0 }
           }
         }
       },
