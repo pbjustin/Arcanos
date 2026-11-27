@@ -11,16 +11,18 @@ and the scopes for the requested tool.
 | Tool | Effect | Required scope in addition to `arcanos:core:query` |
 | --- | --- | --- |
 | `coreAsk` | Creates or reuses a durable job for `arcanos-core`, then waits within a fixed budget. A session-bound turn reads and retains conversation context. | Both memory scopes when a session is supplied |
-| `getCoreJobResult` | Waits briefly for the caller's exact job and returns its owned status or answer. | None |
+| `getCoreJobResult` | Waits briefly for the caller's exact job and returns its owned status or answer. | `arcanos:core:memory:read` for session-bound jobs. Sessionless jobs need only query scope. |
 | `startCoreSession` | Creates or reuses a private Core conversation session. | `arcanos:core:memory:write` |
 | `readCoreMemory` | Reads bounded memory from a session owned by that principal. | `arcanos:core:memory:read` |
 | `writeCoreMemory` | Saves an explicit note after a one-use challenge bound to the same owner, session and request. | `arcanos:core:memory:write` |
 | `inspectCoreDiagnostics` | Returns bounded runtime, worker and queue aggregates. | `arcanos:core:diagnostics` |
 | `readCoreProductivity` | Reads the canonical focus or summary view for the configured owner tenancy. | `arcanos:core:productivity:read` |
 
-Pending work returns an owned job ID for continued polling. The same semantic
-request and idempotency key reuse the job. Scope checks, memory ownership and
-confirmation are enforced by the server. See [Core migration evidence](chatgpt-migration/core/README.md).
+Pending work returns an owned job ID for continued polling. Polling a
+session-bound job without the memory read grant returns `CORE_JOB_NOT_FOUND`.
+The same semantic request and idempotency key reuse the job. Scope checks,
+memory ownership and confirmation are enforced by the server. See
+[Core migration evidence](chatgpt-migration/core/README.md).
 
 ## Private ChatGPT Booker resource
 
