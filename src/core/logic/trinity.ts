@@ -143,8 +143,10 @@ import {
 import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 
 async function recordAuthorizedTrinityStageFailure(
-  params: Parameters<typeof recordTrinityStageFailure>[0]
+  params: Parameters<typeof recordTrinityStageFailure>[0],
+  disableOptionalSideEffects: TrinityRunOptions['disableOptionalSideEffects']
 ): Promise<TrinitySelfHealingAction | null> {
+  if (disableOptionalSideEffects) return null;
   const controls = await getKillSwitchStatus();
   throwIfRequestAborted();
   if (controls.frozen || controls.autonomyLevel < 3) return null;
@@ -1895,7 +1897,7 @@ export async function runThroughBrain(
           requestId,
           sourceEndpoint: options.sourceEndpoint,
           mitigationId: selfHealingMitigation.stageMitigationIds?.intake ?? null
-        });
+        }, options.disableOptionalSideEffects);
         const intakeRecoveryMitigationId = intakeRecoveryAction ? getTrinitySelfHealingMitigation({
           tier, answerMode: outputControls.answerMode
         }).stageMitigationIds?.intake ?? null : null;
@@ -1971,7 +1973,7 @@ export async function runThroughBrain(
           requestId,
           sourceEndpoint: options.sourceEndpoint,
           mitigationId: selfHealingMitigation.stageMitigationIds?.reasoning ?? null
-        });
+        }, options.disableOptionalSideEffects);
         const reasoningRecoveryMitigationId = reasoningRecoveryAction ? getTrinitySelfHealingMitigation({
           tier, answerMode: outputControls.answerMode
         }).stageMitigationIds?.reasoning ?? null : null;
@@ -2212,7 +2214,7 @@ export async function runThroughBrain(
             requestId,
             sourceEndpoint: options.sourceEndpoint,
             mitigationId: selfHealingMitigation.stageMitigationIds?.final ?? null
-          });
+          }, options.disableOptionalSideEffects);
           finalRecoveryMitigationId = finalRecoveryAction ? getTrinitySelfHealingMitigation({
             tier, answerMode: outputControls.answerMode
           }).stageMitigationIds?.final ?? null : null;

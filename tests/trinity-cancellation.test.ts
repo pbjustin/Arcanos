@@ -600,12 +600,27 @@ describe('Trinity cancellation and optional side effects', () => {
     expect(mockRecordTrinityJudgedFeedback).not.toHaveBeenCalled();
   });
 
-  it('preserves simple-tier recovery for a local stage abort while the parent remains active', async () => {
+  it.each([
+    ['intake', true],
+    ['reasoning', true],
+    ['final', true],
+    ['intake', false],
+    ['reasoning', false],
+    ['final', false]
+  ] as const)('recovers from a local %s abort with optional side effects disabled=%s', async (stage, disableOptionalSideEffects) => {
     const controller = new AbortController();
-    const localAbort = Object.assign(new Error('intake stage timed out'), { name: 'AbortError' });
-    mockCreateSingleChatCompletion
-      .mockRejectedValueOnce(localAbort)
-      .mockResolvedValueOnce(completion('Recovered direct answer.', authorityModel));
+    const localAbort = Object.assign(new Error(`${stage} stage timed out`), { name: 'AbortError' });
+    if (stage !== 'intake') {
+      primeSuccessfulPipeline();
+      mockCreateSingleChatCompletion.mockReset()
+        .mockResolvedValueOnce(completion('Framed request.', 'gpt-6-luna'));
+    }
+    if (stage === 'reasoning') {
+      mockRunStructuredReasoning.mockRejectedValueOnce(localAbort);
+    } else {
+      mockCreateSingleChatCompletion.mockRejectedValueOnce(localAbort);
+    }
+    mockCreateSingleChatCompletion.mockResolvedValueOnce(completion('Recovered direct answer.', authorityModel));
 
     const result = await runWithRequestAbortContext(
       activeRequestContext(controller),
@@ -614,15 +629,23 @@ describe('Trinity cancellation and optional side effects', () => {
         'Assess this launch plan and note any limitation around competitor moves.',
         undefined,
         undefined,
-        { disableOptionalSideEffects: true },
+        { disableOptionalSideEffects, redactAuditContent: true },
         createRuntimeBudget()
       )
     );
 
     expect(controller.signal.aborted).toBe(false);
-    expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
-    expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(2);
-    expect(mockRecordTrinityStageFailure).toHaveBeenCalledTimes(1);
+    expect(result.result).toBe('Recovered direct answer.');
+    expect(result.routingStages).toContain(stage === 'final' ? 'ARCANOS-FINAL' : 'ARCANOS-DIRECT-ANSWER');
+    expect(mockCreateSingleChatCompletion).toHaveBeenCalledTimes(stage === 'final' ? 3 : 2);
+    if (disableOptionalSideEffects) {
+      expect(mockRecordTrinityStageFailure).not.toHaveBeenCalled();
+    } else {
+      expect(mockRecordTrinityStageFailure).toHaveBeenCalledTimes(1);
+      expect(mockRecordTrinityStageFailure).toHaveBeenCalledWith(expect.objectContaining({
+        stage, error: 'Sensitive-context generation failed.'
+      }));
+    }
   });
 
   it('removes a deadline-expired tier waiter and recovers every critical-tier permit', async () => {
