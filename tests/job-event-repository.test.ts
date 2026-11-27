@@ -345,7 +345,7 @@ describe('jobEventRepository.listJobEventTimeline', () => {
     expect(JOB_EVENT_TYPES).toContain('job.cancelled');
   });
 
-  it('excludes local-agent events when trusted tenant context is unavailable', async () => {
+  it('excludes private Core and local-agent events when trusted tenant context is unavailable', async () => {
     await listJobEventTimeline({
       traceId: 'trace-1',
       localAgentScope: null
@@ -357,7 +357,8 @@ describe('jobEventRepository.listJobEventTimeline', () => {
     );
     expect(sql).toContain("job.job_type IS DISTINCT FROM 'local-agent'");
     expect(sql).toContain('event.trace_id = $1');
-    expect(queryMock.mock.calls[0]?.[1]).toEqual(['trace-1', 100]);
+    expect(sql).toContain("(job.job_type <> 'gpt' OR job.input->>'requestPath' IS DISTINCT FROM $2)");
+    expect(queryMock.mock.calls[0]?.[1]).toEqual(['trace-1', '/chatgpt/core/mcp', 100]);
   });
 
   it('binds local-agent timeline events to the trusted principal and workspace', async () => {
@@ -378,10 +379,12 @@ describe('jobEventRepository.listJobEventTimeline', () => {
     expect(sql).toContain("job.input->'job'->>'workspace' = $3");
     expect(sql).not.toContain('operator:primary');
     expect(sql).not.toContain('personal');
+    expect(sql).toContain("(job.job_type <> 'gpt' OR job.input->>'requestPath' IS DISTINCT FROM $4)");
     expect(queryMock.mock.calls[0]?.[1]).toEqual([
       'job-1',
       'operator:primary',
       'personal',
+      '/chatgpt/core/mcp',
       100
     ]);
   });

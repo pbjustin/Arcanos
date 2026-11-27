@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "arcanos-core",
+  "version": "0.1.0",
+  "description": "Connects ARCANOS conversations, owned continuity, scoped diagnostics, and productivity views to the ARCANOS Core backend.",
+  "author": { "name": "ARCANOS" },
+  "repository": "https://github.com/pbjustin/Arcanos",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ARCANOS",
+        "shortDescription": "Core answers and diagnostics",
+        "longDescription": "Use ARCANOS Core for general reasoning and writing, continue your own conversations and jobs, and inspect authorized runtime, queue, and productivity status. Requires the private ARCANOS Core connection.",
+        "developerName": "ARCANOS",
+        "category": "Developer Tools",
+        "capabilities": ["Interactive"]
+      }
+    }
+  }
+}

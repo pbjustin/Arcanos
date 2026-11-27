@@ -25,20 +25,22 @@ describe('generic job repository local-agent boundary', () => {
     queryMock.mockResolvedValue({ rows: [] });
   });
 
-  it('excludes local-agent jobs from the generic latest-job query', async () => {
+  it('excludes local-agent and private Core jobs from the generic latest-job query', async () => {
     await getLatestJob();
 
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain("job_type <> 'local-agent'");
-    expect(params).toEqual([]);
+    expect(sql).toContain("(job_type <> 'gpt' OR input->>'requestPath' IS DISTINCT FROM $1)");
+    expect(params).toEqual(['/chatgpt/core/mcp']);
   });
 
-  it('excludes local-agent jobs from generic failed-job inspection', async () => {
+  it('excludes local-agent and private Core jobs from generic failed-job inspection', async () => {
     await listFailedJobs(5);
 
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain("job_type <> 'local-agent'");
-    expect(params).toEqual([5]);
+    expect(sql).toContain("(job_type <> 'gpt' OR input->>'requestPath' IS DISTINCT FROM $2)");
+    expect(params).toEqual([5, '/chatgpt/core/mcp']);
   });
 
   it('excludes local-agent state and failure reasons from generic queue summaries', async () => {

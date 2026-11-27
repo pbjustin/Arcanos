@@ -8,6 +8,11 @@ names and registers all eight tool schemas in `getProtocolSchemaCatalog()`.
 
 ## Overview
 
+The root `@arcanos/protocol` export provides `CHATGPT_CORE_TOOL_NAMES`,
+`chatGptCoreSchemas`, `CoreMcpInputs`, `CoreMcpToolName`, and `CoreDiagnosticArea`
+for the private Core MCP resource. Its contract is registered in the tool
+catalog and introduces no daemon command IDs.
+
 The root `@arcanos/protocol` export also provides the dedicated Booker MCP tool
 names, schemas and TypeScript types from `src/chatgptBooker.ts`. They are
 registered in the tool catalog and do not extend the daemon command set or

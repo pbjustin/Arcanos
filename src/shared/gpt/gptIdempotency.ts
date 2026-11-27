@@ -175,11 +175,12 @@ export interface GptIdempotencyDescriptor {
 export type GptJobCreationSurface =
   | 'public-gpt'
   | 'custom-gpt-bridge'
-  | 'gpt-access';
+  | 'gpt-access'
+  | 'chatgpt-core';
 
 export type PublicGptJobCreationSurface = Exclude<
   GptJobCreationSurface,
-  'gpt-access'
+  'gpt-access' | 'chatgpt-core'
 >;
 
 const PUBLIC_GPT_REQUEST_PATH_PATTERN =

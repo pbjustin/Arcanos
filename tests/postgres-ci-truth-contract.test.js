@@ -27,6 +27,7 @@ const POSTGRES_TEST_DATABASE_ENVIRONMENTS = [
 const POSTGRES_TEST_FILES = [
   'tests/integration/local-agent-hardening.pg.integration.test.ts',
   'tests/integration/job-claim-fencing.pg18.integration.test.ts',
+  'tests/integration/chatgpt-core.pg18.integration.test.ts',
   'tests/integration/dag-snapshot-generation.pg18.integration.test.ts',
   'tests/integration/job-worker-budget-identity.pg18.integration.test.ts',
   'tests/integration/worker-runtime-persistence.pg18.integration.test.ts',

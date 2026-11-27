@@ -1,5 +1,13 @@
 # Schema and Protocol Guide
 
+The private Core MCP contract lives in
+[`tools/arcanos-core/contract.schema.json`](../packages/protocol/schemas/v1/tools/arcanos-core/contract.schema.json)
+and registers its named tool schemas in the protocol catalog. It publishes
+closed tool inputs for one fixed Core resource. The backend separately verifies
+OAuth scopes, job and session ownership, and confirmation. Existing GPT Access,
+daemon commands and Python contracts continue to use their established schemas.
+See [Core resource behavior](API.md#private-chatgpt-core-resource).
+
 The private Gaming MCP schemas are in
 [`packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json`](../packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json),
 registered as eight named tools in the protocol catalog. Existing Gaming

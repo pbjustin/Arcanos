@@ -2383,6 +2383,27 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
 | `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
 | `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
+## Optional private ChatGPT Core resource
+
+The [Core MCP resource](API.md#private-chatgpt-core-resource) uses a dedicated
+OAuth resource and explicit owner grant. The issuer and ChatGPT OAuth client
+must support authorization code with PKCE S256.
+
+| Setting | Runtime requirement |
+| --- | --- |
+| `CHATGPT_CORE_ENABLED` | Default `false`. Exact `true` enables web-route configuration. |
+| `CHATGPT_CORE_ISSUER` | Exact HTTPS access-token issuer advertised for OAuth discovery. |
+| `CHATGPT_CORE_RESOURCE` | Exact HTTPS URL ending in `/chatgpt/core/mcp`, also the token audience. |
+| `CHATGPT_CORE_JWKS_URL` | HTTPS signing-key endpoint for the configured issuer. |
+| `CHATGPT_CORE_OAUTH_CLIENT_ID` | Approved client ID verified in the access token. |
+| `CHATGPT_CORE_OWNER_SUBJECT` | Exact authorized issuer subject for this private resource. |
+| `ARCANOS_CHATGPT_CORE_STORAGE_KEY` | Same distinct key on web and worker, encoded as 32 random bytes in unpadded canonical base64url. It protects queued inputs and outputs and private memory. Existing records depend on this key. |
+| `CHATGPT_CORE_PRODUCTIVITY_PRINCIPAL_ID` and `CHATGPT_CORE_PRODUCTIVITY_WORKSPACE_ID` | Optional exact server-selected Productivity tenant for summary and focus reads. Grant the separate scope only after verifying owner access to that tenant. |
+
+Keep deployment values private. Leave the resource disabled until the exact
+issuer, scope grants, client binding, storage key and owner are verified.
+See [Core migration and acceptance](chatgpt-migration/core/README.md).
+
 ## Optional private ChatGPT Booker resource
 
 The [Booker MCP resource](API.md#private-chatgpt-booker-resource) is disabled by

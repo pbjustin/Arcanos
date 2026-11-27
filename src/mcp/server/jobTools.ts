@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { McpRequestContext } from '../context.js';
 import { mcpError, mcpText } from '../errors.js';
 import { getJobById } from '@core/db/repositories/jobRepository.js';
+import { isCoreGptJobInput } from '@shared/chatgpt/coreJob.js';
 import {
   buildGptJobResultBridgePayload,
   buildGptJobStatusBridgePayload,
@@ -13,8 +14,9 @@ type AnyMcpServer = {
   registerTool: (name: string, config: Record<string, unknown>, handler: (args: unknown) => Promise<unknown>) => void;
 };
 
-function isProtectedLocalAgentJob(job: { job_type?: unknown } | null): boolean {
-  return job?.job_type === 'local-agent';
+function isProtectedJob(job: { job_type?: unknown; input?: unknown }): boolean {
+  return job.job_type === 'local-agent'
+    || (job.job_type === 'gpt' && isCoreGptJobInput(job.input));
 }
 
 export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext): void {
@@ -30,7 +32,7 @@ export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext
     },
     wrapTool('jobs.status', ctx, async (args: any) => {
       const job = await getJobById(args.jobId);
-      if (!job || isProtectedLocalAgentJob(job)) {
+      if (!job || isProtectedJob(job)) {
         return mcpError({
           code: 'ERR_NOT_FOUND',
           message: 'Async GPT job was not found.',
@@ -58,7 +60,7 @@ export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext
     },
     wrapTool('jobs.result', ctx, async (args: any) => {
       const job = await getJobById(args.jobId);
-      if (!job || isProtectedLocalAgentJob(job)) {
+      if (!job || isProtectedJob(job)) {
         return mcpError({
           code: 'ERR_NOT_FOUND',
           message: 'Async GPT job was not found.',

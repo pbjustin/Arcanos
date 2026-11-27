@@ -91,6 +91,7 @@ function isStructuredReasoningPayload(value: unknown): value is TrinityStructure
 
 export interface StructuredReasoningSchemaOptions {
   schemaVariant?: 'compact' | 'full';
+  store?: false;
   previewChaosHook?: PreviewAskChaosHook;
   reasoningEffort?: StructuredReasoningEffort;
   maxOutputTokens?: number;
@@ -160,7 +161,9 @@ export async function runStructuredReasoning(
       create: (
         payload: ResponseCreateParamsNonStreaming,
         requestOptions?: Parameters<OpenAI['responses']['create']>[1]
-      ) => client.responses.create(prepareBehavioralProfileRequest(payload), requestOptions)
+      ) => client.responses.create(prepareBehavioralProfileRequest(
+        options.store === false ? { ...payload, store: false } : payload
+      ), requestOptions)
     }
   } as unknown as OpenAI;
   return runStructuredReasoningGeneric(profiledClient, {

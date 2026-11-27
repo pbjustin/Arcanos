@@ -198,6 +198,7 @@ interface OpenAIResponsesRequestOptions {
   signal?: AbortSignal;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  redactSensitiveDiagnostics?: boolean;
 }
 
 function resolveResponsesTimeoutMs(explicitTimeoutMs?: number): number {
@@ -294,7 +295,8 @@ export const createGPT5Reasoning = async (
         tokenParams as Record<string, unknown>,
         RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
       ),
-      includeRoutingMessage: false
+      includeRoutingMessage: false,
+      ...(options.redactSensitiveDiagnostics ? { store: false } : {})
     });
     if (options.reasoningEffort !== undefined) {
       requestPayload.reasoning = { effort: options.reasoningEffort };
@@ -305,7 +307,7 @@ export const createGPT5Reasoning = async (
     const content = extractReasoningText(response as ChatCompletion);
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_SUCCESS, {
       model: resolvedModel,
-      preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
+      ...(options.redactSensitiveDiagnostics ? {} : { preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH) })
     });
     return { content, model: resolvedModel };
   } catch (err: unknown) {
@@ -314,8 +316,9 @@ export const createGPT5Reasoning = async (
     if (isAbortError(error)) {
       throw error;
     }
-    const errorMsg = error.message || 'Unknown error';
-    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, error);
+    const diagnosticError = options.redactSensitiveDiagnostics ? new Error('Sensitive-context provider request failed.') : error;
+    const errorMsg = diagnosticError.message || 'Unknown error';
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, diagnosticError);
     return { content: `[Fallback: GPT-5.1 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };

@@ -1098,6 +1098,22 @@ describe('createMcpServer job control tools', () => {
     expect(JSON.stringify(output)).not.toContain('operator:preview');
   });
 
+  it.each(['jobs.status', 'jobs.result'])('conceals private Core jobs from %s', async toolName => {
+    mockGetJobById.mockResolvedValue({
+      id: 'private-core-job',
+      job_type: 'gpt',
+      status: 'completed',
+      input: { requestPath: '/chatgpt/core/mcp' },
+      output: { version: 1, envelope: 'private-core-envelope' },
+    });
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const output = await server.tools.get(toolName)!.handler({ jobId: 'private-core-job' });
+    expect(output).toMatchObject({
+      isError: true, structuredContent: { error: { code: 'ERR_NOT_FOUND' } },
+    });
+    expect(JSON.stringify(output)).not.toContain('private-core-envelope');
+  });
+
   it('marks approval-required execute control-plane requests before service invocation', async () => {
     mockRequiresControlPlaneApproval.mockReturnValue(true);
     const server = await createMcpServer(buildContext()) as FakeMcpServer;

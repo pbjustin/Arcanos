@@ -219,6 +219,19 @@ describe('workerControlService', () => {
     await expect(getWorkerJobDetailById('local-agent-job')).resolves.toBeNull();
   });
 
+  it.each(['running', 'failed'])('conceals %s Core jobs from worker detail and retry', async status => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'private-core-job',
+      job_type: 'gpt',
+      status,
+      input: { requestPath: '/chatgpt/core/mcp' },
+      output: { version: 1, envelope: 'private-core-envelope' },
+    });
+    await expect(getWorkerJobDetailById('private-core-job')).resolves.toBeNull();
+    await expect(requeueFailedWorkerJob('private-core-job')).resolves.toEqual({ outcome: 'not_found', job: null });
+    expect(requeueFailedJobMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['healthy idle', 0, 0, 'healthy', 'healthy', false, 0],
     ['inactive with fresh pending work', 1, 0, 'healthy', 'healthy', false, 0],
