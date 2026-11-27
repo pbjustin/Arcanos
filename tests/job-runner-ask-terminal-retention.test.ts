@@ -6,6 +6,7 @@ const recordJobEventMock = jest.fn(async () => undefined);
 const claimNextMock = jest.fn();
 const runWorkerTrinityPromptMock = jest.fn();
 const runDagNodeJobMock = jest.fn();
+const executeCoreQueuedJobMock = jest.fn();
 const classifyWorkerAiBudgetErrorMock = jest.fn((_error: unknown): unknown => null);
 const routeGptRequestMock = jest.fn();
 const resolveAuthorityAdmissionMock = jest.fn(async () => 'not_applicable');
@@ -145,6 +146,10 @@ jest.unstable_mockModule('@services/arcanosCoreRuntimeProviders.js', () => ({
   configureDefaultArcanosCoreRuntimeProviders: jest.fn()
 }));
 
+jest.unstable_mockModule('@services/chatgptCoreJobs.js', () => ({
+  executeCoreQueuedJob: executeCoreQueuedJobMock
+}));
+
 jest.unstable_mockModule('@routes/_core/gptDispatch.js', () => ({
   routeGptRequest: routeGptRequestMock
 }));
@@ -174,6 +179,7 @@ const { getAiExecutionContext } = await import(
   '../src/services/openai/aiExecutionContext.js'
 );
 const { APIConnectionError, APIUserAbortError } = await import('openai');
+const { CORE_GPT_JOB_PATH } = await import('../src/shared/chatgpt/coreJob.js');
 const { buildProtectedBackstageQueuedGptJobInput, buildQueuedGptJobInput } = await import(
   '../src/shared/gpt/asyncGptJob.js'
 );
@@ -2310,6 +2316,81 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
         jest.useRealTimers();
       }
     },
+  );
+});
+
+describe('Core job outer failure handling', () => {
+  it.each(['budget pause', 'provider connection failure'] as const)(
+    'settles an already-started Core job after a %s without retrying it',
+    async (scenario) => {
+      const workerId = 'worker-test-slot-1';
+      const statsWorkerId = 'worker-test-stats';
+      const claimedJob = {
+        id: 'core-terminal-failure-job', worker_id: 'queue', job_type: 'gpt',
+        status: 'running', claim_generation: '1', retry_count: 0, max_retries: 0,
+        input: { gptId: 'arcanos-core', requestPath: CORE_GPT_JOB_PATH },
+        last_worker_id: workerId, lease_expires_at: new Date(Date.now() + 60_000),
+        created_at: new Date(), updated_at: new Date(), cancel_requested_at: null,
+      };
+      const privateError = new Error('private Core provider details');
+      const budgetPaused = scenario === 'budget pause';
+      classifyWorkerAiBudgetErrorMock.mockImplementation(error => (
+        budgetPaused && error === privateError ? { kind: 'budget_paused', retryAt: null } : null
+      ));
+      executeCoreQueuedJobMock.mockReset();
+      if (budgetPaused) {
+        executeCoreQueuedJobMock.mockImplementationOnce(async () => {
+          // A transport attempt can record a budget error that the executor catches.
+          const context = getAiExecutionContext();
+          if (!context) throw new Error('Expected a worker AI execution context');
+          context.workerBudgetFailure = privateError;
+          return { status: 'failed', output: null, errorMessage: 'Executor failure', retryable: false };
+        });
+      } else {
+        executeCoreQueuedJobMock.mockRejectedValueOnce(new APIConnectionError({ cause: privateError }));
+      }
+      claimNextMock.mockReset().mockResolvedValueOnce({ job: claimedJob }).mockResolvedValue({ job: null });
+      queryMock.mockReset().mockImplementation(async (sql: unknown) => {
+        if (String(sql).startsWith('SELECT * FROM job_data')) return { rows: [claimedJob] };
+        throw new Error('Unexpected Core worker repository query');
+      });
+      const autonomyService = {
+        markDispatcherStarted: jest.fn(async () => undefined), getHeartbeatIntervalMs: () => 30_000,
+        getRecommendedWorkerHeartbeatDelayMs: () => 30_000, recordWorkerHeartbeat: jest.fn(async () => undefined),
+        evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+        getWorkerAiCallBudget: () => ({ workerId, statsWorkerId, maxCallsPerHour: 120 }),
+        setClaimAcceptanceState: jest.fn(async () => undefined), recordClaimAttempt: jest.fn(),
+        getClaimOptions: () => ({ workerId, leaseMs: 30_000 }), recordClaimResult: jest.fn(),
+        markJobStarted: jest.fn(async () => undefined), markIdle: jest.fn(async () => undefined),
+        recordHeartbeat: jest.fn(async () => claimedJob), recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+        markJobLeaseLost: jest.fn(async () => undefined), markJobCompleted: jest.fn(async () => undefined),
+        markJobCancelled: jest.fn(async () => undefined), handleJobFailure: jest.fn(async () => ({ action: 'failed' })),
+        deferJobForProviderRecovery: jest.fn(async () => ({ action: 'deferred' })),
+        flushSnapshotPipeline: jest.fn(async () => undefined),
+      };
+      try {
+        await expect(runWorkerConsumerSlot(
+          { slotIndex: 0, slotNumber: 1, workerId, statsWorkerId, isInspectorSlot: true },
+          { pollMs: 1, idleBackoffMs: 1, concurrency: 1, baseWorkerId: 'worker-test', statsWorkerId },
+          autonomyService as never,
+        )).rejects.toBe(stopAfterOneIteration);
+
+        expect(executeCoreQueuedJobMock).toHaveBeenCalledTimes(1);
+        expect(executeCoreQueuedJobMock).toHaveBeenCalledWith(claimedJob.id, claimedJob.input, expect.any(AbortSignal));
+        expect(autonomyService.handleJobFailure).toHaveBeenCalledTimes(1);
+        expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, 'CORE_GENERATION_FAILED', false, null);
+        expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
+        expect(autonomyService.setClaimAcceptanceState).not.toHaveBeenCalledWith('dependency_failure', expect.any(Object));
+        if (budgetPaused) {
+          expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith('paused_budget', {
+            reason: 'ai_calls_per_hour_exceeded_during_provider_attempt', retryAt: null,
+          });
+        }
+      } finally {
+        classifyWorkerAiBudgetErrorMock.mockReset().mockReturnValue(null);
+        executeCoreQueuedJobMock.mockReset();
+      }
+    }
   );
 });
 
