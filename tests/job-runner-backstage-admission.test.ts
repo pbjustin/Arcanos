@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { CORE_GPT_ID, CORE_GPT_JOB_PATH } from '../src/shared/chatgpt/coreJob.js';
 import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
   BACKSTAGE_ROSTER_VALIDATION_ERROR_CODE,
@@ -28,6 +29,7 @@ const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
 const mockValidateGptRegistry = jest.fn();
 const mockDispatchModuleAction = jest.fn();
+const mockExecuteCoreQueuedJob = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockPersistModuleConversation = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
@@ -97,6 +99,10 @@ jest.unstable_mockModule('@services/trinity/adapter.js', () => ({
 
 jest.unstable_mockModule('@services/arcanosCoreRuntimeProviders.js', () => ({
   configureDefaultArcanosCoreRuntimeProviders: jest.fn(),
+}));
+
+jest.unstable_mockModule('@services/chatgptCoreJobs.js', () => ({
+  executeCoreQueuedJob: mockExecuteCoreQueuedJob,
 }));
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
@@ -210,6 +216,84 @@ afterAll(() => {
   } else {
     process.env.BOOKER_WORKER_JOB_TIMEOUT_MS = originalWorkerJobTimeout;
   }
+});
+
+describe('normal worker private Core job admission', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('routes a Core-marked job to its private executor with the original cancellation signal', async () => {
+    const jobId = '14141414-1414-4414-8414-141414141414';
+    const rawInput = { gptId: CORE_GPT_ID, requestPath: CORE_GPT_JOB_PATH };
+    const { signal } = new AbortController();
+    const executionPrivacyState = { cancellationPrivacy: null };
+    const outcome = { status: 'completed', output: { sealed: 'synthetic-core-result' } };
+    mockExecuteCoreQueuedJob.mockResolvedValueOnce(outcome);
+
+    await expect(executeQueuedGptRequest({
+      jobId, rawInput, cancellationSignal: signal, executionPrivacyState,
+    })).resolves.toBe(outcome);
+
+    expect(mockExecuteCoreQueuedJob).toHaveBeenCalledTimes(1);
+    expect(mockExecuteCoreQueuedJob).toHaveBeenCalledWith(jobId, rawInput, signal);
+    expect(mockExecuteCoreQueuedJob.mock.calls[0]?.[2]).toBe(signal);
+    expect(executionPrivacyState.cancellationPrivacy).toBe('core');
+    expect(mockGetGptModuleMap).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes a Core job cancellation before it enters the executor', async () => {
+    const privateCancellationReason = 'private Core cancellation sentinel';
+    const jobId = '15151515-1515-4515-8515-151515151515';
+    const requestedAt = new Date('2026-08-31T12:10:00.000Z');
+    const job = {
+      id: jobId,
+      job_type: 'gpt',
+      status: 'running',
+      input: { gptId: CORE_GPT_ID, requestPath: CORE_GPT_JOB_PATH },
+      claim_generation: '3',
+      cancel_requested_at: requestedAt,
+      created_at: new Date('2026-08-31T12:09:00.000Z'),
+    };
+    const fence = { workerId: 'worker-core-cancellation', claimGeneration: '3' };
+    const publicCancellationReason = 'The Core job was cancelled.';
+    const markJobCancelled = jest.fn(async () => undefined);
+    mockUpdateClaimedJobTerminal.mockResolvedValueOnce({ ...job, status: 'cancelled' });
+
+    await expect(persistClaimedJobCancellation({
+      job: job as never,
+      fence,
+      autonomyService: { markJobCancelled } as never,
+      jobStartedAtMs: Date.now(),
+      cancellationReason: privateCancellationReason,
+      output: null,
+      allowPreExecutionInputFallback: true,
+    })).resolves.toBe(true);
+
+    expect(mockUpdateClaimedJobTerminal).toHaveBeenCalledTimes(1);
+    expect(mockUpdateClaimedJobTerminal).toHaveBeenCalledWith(
+      jobId,
+      'cancelled',
+      expect.objectContaining({
+        fence,
+        output: null,
+        errorMessage: publicCancellationReason,
+        autonomyState: {
+          cancellation: {
+            requested: true,
+            requestedAt: requestedAt.toISOString(),
+            reason: publicCancellationReason,
+          },
+        },
+        metadata: expect.objectContaining({ cancelReason: publicCancellationReason }),
+      })
+    );
+    expect(JSON.stringify(mockUpdateClaimedJobTerminal.mock.calls)).not.toContain(privateCancellationReason);
+    expect(markJobCancelled).toHaveBeenCalledWith(jobId);
+    expect(mockExecuteCoreQueuedJob).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
 });
 
 describe('normal worker queued Backstage mutation admission', () => {

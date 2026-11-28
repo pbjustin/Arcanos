@@ -18,6 +18,17 @@ export interface ConditionalSaveMemoryOptions extends SaveMemoryOptions {
   ifNewerRevision: string;
 }
 
+const CORE_SESSION_PREFIX = 'chatgpt-core-session:v1:';
+
+function coreSessionMemoryKey(sessionId: string): string {
+  if (!/^[a-f0-9]{64}$/u.test(sessionId)) throw new Error('Invalid Core session ID.');
+  return CORE_SESSION_PREFIX + sessionId;
+}
+
+function isProtectedMemoryKey(key: string): boolean {
+  return typeof key === 'string' && key.startsWith(CORE_SESSION_PREFIX);
+}
+
 /** @internal Exact PostgreSQL fence used by roster snapshot publication and its PG18 contract test. */
 export const CONDITIONAL_MEMORY_UPSERT_SQL =
   `INSERT INTO memory (key, value, expires_at, updated_at)
@@ -146,6 +157,19 @@ export async function saveMemory(
   value: unknown,
   options: SaveMemoryOptions | ConditionalSaveMemoryOptions = {}
 ): Promise<MemoryEntry | null> {
+  if (isProtectedMemoryKey(key)) throw new Error('Protected memory key.');
+  return saveMemoryInternal(key, value, options);
+}
+
+export function saveChatGptCoreSessionMemory(
+  sessionId: string, value: unknown, revision: string,
+): Promise<MemoryEntry | null> {
+  return saveMemoryInternal(coreSessionMemoryKey(sessionId), value, { ifNewerRevision: revision });
+}
+
+async function saveMemoryInternal(
+  key: string, value: unknown, options: SaveMemoryOptions | ConditionalSaveMemoryOptions,
+): Promise<MemoryEntry | null> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -219,6 +243,7 @@ export async function loadMemoryRecordById(recordId: number): Promise<StoredMemo
     created_at: string;
     updated_at: string;
   };
+  if (isProtectedMemoryKey(row.key)) return null;
   const unwrapped = unwrapVersionedMemoryEnvelope(row.value);
 
   return {
@@ -256,6 +281,15 @@ function normalizeRequiredDatabaseTimestamp(rawTimestamp: string): string {
  * Edge cases: expired or missing rows return null; legacy non-envelope rows are returned as-is.
  */
 export async function loadMemory(key: string): Promise<unknown | null> {
+  if (isProtectedMemoryKey(key)) return null;
+  return loadMemoryInternal(key);
+}
+
+export function loadChatGptCoreSessionMemory(sessionId: string): Promise<unknown | null> {
+  return loadMemoryInternal(coreSessionMemoryKey(sessionId));
+}
+
+async function loadMemoryInternal(key: string): Promise<unknown | null> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -281,6 +315,7 @@ export async function loadMemory(key: string): Promise<unknown | null> {
  * Edge cases: expired rows are treated as missing to keep exact retrieval deterministic.
  */
 export async function getMemoryRecordByKey(key: string): Promise<DurableMemoryRecord | null> {
+  if (isProtectedMemoryKey(key)) return null;
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -324,7 +359,8 @@ export async function getMemoryRecordByRecordId(recordId: string): Promise<Durab
     return null;
   }
 
-  return normalizeDurableMemoryRecord(result.rows[0] as MemoryRepositoryRow);
+  const row = result.rows[0] as MemoryRepositoryRow;
+  return isProtectedMemoryKey(row.key) ? null : normalizeDurableMemoryRecord(row);
 }
 
 /**
@@ -350,7 +386,8 @@ export async function getMemoryRecordByLegacyRowId(rowId: number): Promise<Durab
     return null;
   }
 
-  return normalizeDurableMemoryRecord(result.rows[0] as MemoryRepositoryRow);
+  const row = result.rows[0] as MemoryRepositoryRow;
+  return isProtectedMemoryKey(row.key) ? null : normalizeDurableMemoryRecord(row);
 }
 
 /**
@@ -359,6 +396,7 @@ export async function getMemoryRecordByLegacyRowId(rowId: number): Promise<Durab
  * Edge cases: missing rows return false without throwing.
  */
 export async function deleteMemory(key: string): Promise<boolean> {
+  if (isProtectedMemoryKey(key)) return false;
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }

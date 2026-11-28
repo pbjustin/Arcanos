@@ -27,6 +27,7 @@ import {
   type QueuedAskPendingResponse
 } from '@shared/ask/asyncAskJob.js';
 import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
+import { isCoreGptJobInput } from '@shared/chatgpt/coreJob.js';
 import type { ClientContextDTO } from '@shared/types/dto.js';
 import { redactSensitive, redactString } from '@shared/redaction.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
@@ -1122,6 +1123,7 @@ export async function getLatestWorkerJobDetail(): Promise<WorkerJobDetailSnapsho
 export async function getWorkerJobDetailById(jobId: string): Promise<WorkerJobDetailSnapshot | null> {
   const job = await getJobById(jobId);
   return job && job.job_type !== 'local-agent'
+    && !(job.job_type === 'gpt' && isCoreGptJobInput(job.input))
     ? buildWorkerJobDetailSnapshot(job)
     : null;
 }
@@ -1251,7 +1253,7 @@ export async function requeueFailedWorkerJob(
   } = {}
 ): Promise<RequeueFailedWorkerJobResult> {
   const existingJob = await getJobById(jobId);
-  if (!existingJob) {
+  if (!existingJob || (existingJob.job_type === 'gpt' && isCoreGptJobInput(existingJob.input))) {
     return {
       outcome: 'not_found',
       job: null

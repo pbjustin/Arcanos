@@ -1,5 +1,9 @@
 # Four-GPT migration inventory
 
+For the current Core capability inventory, Builder reconciliation and private package, use the
+[ARCANOS Core migration candidate](core/README.md). The dated tables below
+retain the original foundation dispositions.
+
 Booker Slice A now has a [dedicated source implementation and parity assessment](booker/README.md)
 for Issue #1565. It wraps four run actions, exact universe/storyline reads and
 actor-owned job continuation; canon writes remain blocked. The dated tables

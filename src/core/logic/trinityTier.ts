@@ -95,7 +95,8 @@ export async function runReflection(
   client: OpenAI,
   draft: string,
   tier: Tier,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  redactSensitiveDiagnostics?: boolean
 ): Promise<string | undefined> {
   if (tier !== 'critical') return undefined;
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
@@ -115,6 +116,7 @@ export async function runReflection(
       ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING(),
       {
         signal: getRequestAbortSignal(),
+        ...(redactSensitiveDiagnostics ? { redactSensitiveDiagnostics: true } : {}),
         timeoutMs: resolveReflectionTimeoutMs(runtimeBudget)
       }
     );

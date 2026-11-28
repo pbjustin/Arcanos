@@ -160,6 +160,7 @@ import {
   type OpenAIProviderFailureCategory
 } from '@services/openai/serviceHealth.js';
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
+import { isCoreGptJobInput } from '@shared/chatgpt/coreJob.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
 import { detectBackstageBookerIntent } from '@services/backstageBookerRouteShortcut.js';
 import {
@@ -280,7 +281,7 @@ interface QueuedBackstageExecutionClassification {
   requestedBackstageAction: string | null;
 }
 
-type QueuedGptCancellationPrivacy = 'protected' | 'legacy';
+type QueuedGptCancellationPrivacy = 'protected' | 'legacy' | 'core';
 
 interface QueuedGptExecutionPrivacyState {
   cancellationPrivacy: QueuedGptCancellationPrivacy | null;
@@ -403,6 +404,7 @@ function buildProtectedBackstageCancellationOutput(params: {
 async function resolvePreExecutionQueuedGptCancellationPrivacy(
   rawInput: unknown
 ): Promise<QueuedGptCancellationPrivacy | null> {
+  if (isCoreGptJobInput(rawInput)) return 'core';
   if (
     hasProtectedBackstageQueuedGptMarker(rawInput)
   ) {
@@ -1352,6 +1354,11 @@ export async function executeQueuedGptRequest(params: {
   startedAt?: Date | string | number;
   executionPrivacyState?: QueuedGptExecutionPrivacyState;
 }): Promise<JobExecutionOutcome> {
+  if (isCoreGptJobInput(params.rawInput)) {
+    setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'core');
+    const { executeCoreQueuedJob } = await import('@services/chatgptCoreJobs.js');
+    return executeCoreQueuedJob(params.jobId, params.rawInput, params.cancellationSignal);
+  }
   if (hasProtectedBackstageQueuedGptMarker(params.rawInput)) {
     setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'protected');
   } else if (isQueuedGptJobCancellationPrivacySensitive(params.rawInput)) {
@@ -2140,7 +2147,9 @@ export async function persistClaimedJobCancellation(params: {
     ? PROTECTED_BACKSTAGE_JOB_CANCELLATION_MESSAGE
     : queuedGptCancellationPrivacy === 'legacy'
       ? LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
-      : params.cancellationReason;
+      : queuedGptCancellationPrivacy === 'core'
+        ? 'The Core job was cancelled.'
+        : params.cancellationReason;
   let output = params.output;
   if (queuedGptCancellationPrivacy === 'protected' && output == null) {
     const action = resolveProtectedBackstageQueuedGptJobAction(params.job.input);
@@ -3522,13 +3531,14 @@ export async function runWorkerConsumerSlot(
           continue;
         }
 
+        const coreExecutionBegan = queuedGptExecutionPrivacyState.cancellationPrivacy === 'core';
         const workerAiBudgetFailure = await applyWorkerAiBudgetFailureState(error);
         if (workerAiBudgetFailure) {
           // A partially consumed DAG attempt must settle before the DAG decides
           // whether to retry. The independent worker pause above remains in force.
-          if (dagFailureOutput !== null) {
+          if (dagFailureOutput !== null || coreExecutionBegan) {
             const failureResult = await autonomyService.handleJobFailure(
-              job, resolveErrorMessage(error), false, dagFailureOutput
+              job, coreExecutionBegan ? 'CORE_GENERATION_FAILED' : resolveErrorMessage(error), false, dagFailureOutput
             );
             if (failureResult.action === 'lease_lost') {
               await finalizeCancellationAfterTerminalCasMiss({
@@ -3565,9 +3575,11 @@ export async function runWorkerConsumerSlot(
           continue;
         }
 
-        const classifiedError = classifyWorkerExecutionError(error);
+        const classifiedError = coreExecutionBegan
+          ? { message: 'CORE_GENERATION_FAILED', retryable: false }
+          : classifyWorkerExecutionError(error);
 
-      const providerRuntimeFailure = classifyWorkerProviderRuntimeFailure(
+      const providerRuntimeFailure = coreExecutionBegan ? null : classifyWorkerProviderRuntimeFailure(
         error,
         classifiedError.message
       );

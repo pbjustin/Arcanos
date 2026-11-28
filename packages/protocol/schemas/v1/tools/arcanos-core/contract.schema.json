@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/arcanos-core/contract.schema.json",
+  "title": "Private ARCANOS Core MCP contract",
+  "tools": {
+    "coreAsk": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prompt", "idempotencyKey"],
+        "properties": {
+          "prompt": { "type": "string", "maxLength": 12000, "pattern": "^[\\s\\S]*\\S[\\s\\S]*$" },
+          "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+          "sessionId": { "$ref": "#/$defs/SessionId" },
+          "answerMode": { "enum": ["direct", "explained"] },
+          "maxOutputTokens": { "type": "integer", "minimum": 1, "maximum": 4096 }
+        }
+      },
+      "output": { "$ref": "#/$defs/JobResult" }
+    },
+    "getCoreJobResult": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["jobId"],
+        "properties": { "jobId": { "$ref": "#/$defs/Uuid" } }
+      },
+      "output": { "$ref": "#/$defs/JobResult" }
+    },
+    "startCoreSession": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotencyKey"],
+        "properties": { "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" } }
+      },
+      "output": { "oneOf": [{ "$ref": "#/$defs/SessionResult" }, { "$ref": "#/$defs/Failure" }] }
+    },
+    "readCoreMemory": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId"],
+        "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } }
+      },
+      "output": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "sessionId", "notes"],
+            "properties": {
+              "ok": { "const": true },
+              "sessionId": { "$ref": "#/$defs/SessionId" },
+              "notes": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 4000 } }
+            }
+          },
+          { "$ref": "#/$defs/Failure" }
+        ]
+      }
+    },
+    "writeCoreMemory": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "text", "idempotencyKey"],
+        "properties": {
+          "sessionId": { "$ref": "#/$defs/SessionId" },
+          "text": { "type": "string", "maxLength": 4000, "pattern": "^[\\s\\S]*\\S[\\s\\S]*$" },
+          "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+          "confirmationToken": { "$ref": "#/$defs/Uuid" }
+        }
+      },
+      "output": {
+        "oneOf": [
+          { "$ref": "#/$defs/SessionResult" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "error", "confirmationToken", "confirmationExpiresAt"],
+            "properties": {
+              "ok": { "const": false },
+              "error": { "$ref": "#/$defs/Error" },
+              "confirmationToken": { "$ref": "#/$defs/Uuid" },
+              "confirmationExpiresAt": { "$ref": "#/$defs/Timestamp" }
+            }
+          },
+          { "$ref": "#/$defs/Failure" }
+        ]
+      }
+    },
+    "inspectCoreDiagnostics": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["area"],
+        "properties": { "area": { "enum": ["runtime", "workers", "queue", "overview"] } }
+      },
+      "output": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "area", "runtime"],
+            "properties": {
+              "ok": { "const": true },
+              "area": { "const": "runtime" },
+              "runtime": { "$ref": "#/$defs/Runtime" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "area", "workers"],
+            "properties": {
+              "ok": { "const": true },
+              "area": { "const": "workers" },
+              "workers": { "$ref": "#/$defs/Workers" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "area", "queue"],
+            "properties": {
+              "ok": { "const": true },
+              "area": { "const": "queue" },
+              "queue": { "$ref": "#/$defs/Queue" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "area", "runtime", "workers", "queue"],
+            "properties": {
+              "ok": { "const": true },
+              "area": { "const": "overview" },
+              "runtime": { "$ref": "#/$defs/Runtime" },
+              "workers": { "$ref": "#/$defs/Workers" },
+              "queue": { "$ref": "#/$defs/Queue" }
+            }
+          },
+          { "$ref": "#/$defs/Failure" }
+        ]
+      }
+    },
+    "readCoreProductivity": {
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["view"],
+        "properties": { "view": { "enum": ["summary", "focus"] } }
+      },
+      "output": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "view", "generatedAt", "summary", "focus"],
+            "properties": {
+              "ok": { "const": true },
+              "view": { "const": "summary" },
+              "generatedAt": { "$ref": "#/$defs/Timestamp" },
+              "summary": { "$ref": "#/$defs/ProductivitySummary" },
+              "focus": { "$ref": "#/$defs/Recommendations" }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "view", "generatedAt", "recommended", "candidateCount"],
+            "properties": {
+              "ok": { "const": true },
+              "view": { "const": "focus" },
+              "generatedAt": { "$ref": "#/$defs/Timestamp" },
+              "recommended": { "$ref": "#/$defs/Recommendations" },
+              "candidateCount": { "$ref": "#/$defs/Count" }
+            }
+          },
+          { "$ref": "#/$defs/Failure" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "IdempotencyKey": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$" },
+    "SessionId": { "type": "string", "maxLength": 64, "pattern": "^[a-f0-9]{64}$" },
+    "Uuid": { "type": "string", "maxLength": 36, "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$" },
+    "Count": { "type": "integer", "minimum": 0 },
+    "Timestamp": { "type": "string", "maxLength": 64, "pattern": "^\\d{4}-\\d{2}-\\d{2}T" },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^CORE_[A-Z0-9_]{1,64}$" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "Failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error"],
+      "properties": { "ok": { "const": false }, "error": { "$ref": "#/$defs/Error" } }
+    },
+    "SessionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "sessionId"],
+      "properties": { "ok": { "const": true }, "sessionId": { "$ref": "#/$defs/SessionId" } }
+    },
+    "JobResult": {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "status", "jobId", "answer"],
+          "properties": {
+            "ok": { "const": true },
+            "status": { "const": "completed" },
+            "jobId": { "$ref": "#/$defs/Uuid" },
+            "answer": { "type": "string", "minLength": 1, "maxLength": 64000 },
+            "sessionId": { "$ref": "#/$defs/SessionId" },
+            "continuitySaved": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "status", "jobId"],
+          "properties": {
+            "ok": { "const": true },
+            "status": { "const": "pending" },
+            "jobId": { "$ref": "#/$defs/Uuid" }
+          }
+        },
+        { "$ref": "#/$defs/Failure" }
+      ]
+    },
+    "Runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "uptimeSeconds"],
+      "properties": { "status": { "const": "ok" }, "uptimeSeconds": { "type": "number", "minimum": 0 } }
+    },
+    "Workers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "observed"],
+      "properties": {
+        "status": { "enum": ["healthy", "degraded", "unhealthy", "offline"] },
+        "observed": { "$ref": "#/$defs/Count" }
+      }
+    },
+    "Queue": {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": { "status": { "const": "unavailable" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "pending", "running", "completed", "retainedFailed", "delayed", "stalledRunning", "oldestPendingAgeMs"],
+          "properties": {
+            "status": { "const": "available" },
+            "pending": { "$ref": "#/$defs/Count" },
+            "running": { "$ref": "#/$defs/Count" },
+            "completed": { "$ref": "#/$defs/Count" },
+            "retainedFailed": { "$ref": "#/$defs/Count" },
+            "delayed": { "$ref": "#/$defs/Count" },
+            "stalledRunning": { "$ref": "#/$defs/Count" },
+            "oldestPendingAgeMs": { "type": "number", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "ProductivitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tasks", "projects", "knowledge", "reviews"],
+      "properties": {
+        "tasks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["open", "inbox", "next", "scheduled", "waiting", "overdue", "completed"],
+          "properties": {
+            "open": { "$ref": "#/$defs/Count" },
+            "inbox": { "$ref": "#/$defs/Count" },
+            "next": { "$ref": "#/$defs/Count" },
+            "scheduled": { "$ref": "#/$defs/Count" },
+            "waiting": { "$ref": "#/$defs/Count" },
+            "overdue": { "$ref": "#/$defs/Count" },
+            "completed": { "$ref": "#/$defs/Count" }
+          }
+        },
+        "projects": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["active", "blocked", "onHold", "missingNextAction"],
+          "properties": {
+            "active": { "$ref": "#/$defs/Count" },
+            "blocked": { "$ref": "#/$defs/Count" },
+            "onHold": { "$ref": "#/$defs/Count" },
+            "missingNextAction": { "$ref": "#/$defs/Count" }
+          }
+        },
+        "knowledge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["notes"],
+          "properties": { "notes": { "$ref": "#/$defs/Count" } }
+        },
+        "reviews": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dailyDue", "weeklyDue"],
+          "properties": { "dailyDue": { "type": "boolean" }, "weeklyDue": { "type": "boolean" } }
+        }
+      }
+    },
+    "Recommendations": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "project", "reasonCodes"],
+        "properties": {
+          "item": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "dueAt"],
+            "properties": {
+              "title": { "type": "string", "maxLength": 240 },
+              "dueAt": { "anyOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] }
+            }
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title"],
+                "properties": { "title": { "type": "string", "maxLength": 240 } }
+              },
+              { "type": "null" }
+            ]
+          },
+          "reasonCodes": {
+            "type": "array",
+            "maxItems": 7,
+            "items": {
+              "enum": ["high_priority", "overdue", "due_today", "due_soon", "active_project", "project_overdue", "project_due_soon"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-18T02:54:02.031Z",
+  "generatedAt": "2026-11-27T18:03:01.423Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -280,6 +280,9 @@
           "relativePath": "packages/protocol/src/chatgptBooker.ts"
         },
         {
+          "relativePath": "packages/protocol/src/chatgptCore.ts"
+        },
+        {
           "relativePath": "packages/protocol/src/chatgptGaming.ts"
         },
         {
@@ -381,6 +384,12 @@
         },
         {
           "relativePath": "src/chatgpt/bookerRequestAuth.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/core.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/coreAuth.ts"
         },
         {
           "relativePath": "src/chatgpt/gaming.ts"
@@ -1355,6 +1364,9 @@
           "relativePath": "src/routes/chatgptBookerMcpCore.ts"
         },
         {
+          "relativePath": "src/routes/chatgptCoreMcp.ts"
+        },
+        {
           "relativePath": "src/routes/chatgptGamingMcp.ts"
         },
         {
@@ -1752,6 +1764,24 @@
         },
         {
           "relativePath": "src/services/cef/types.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCoreDiagnostics.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCoreJobs.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCorePrivacy.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCoreProductivity.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCoreSession.ts"
+        },
+        {
+          "relativePath": "src/services/chatgptCoreStorage.ts"
         },
         {
           "relativePath": "src/services/clear2.ts"
@@ -2742,6 +2772,12 @@
         },
         {
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/chatgpt/coreJob.ts"
+        },
+        {
+          "relativePath": "src/shared/chatgpt/coreMcpContract.ts"
         },
         {
           "relativePath": "src/shared/chatgpt/gamingCompositionPreviewFixture.ts"
@@ -4147,6 +4183,18 @@
           "relativePath": "tests/chatgpt-booker.real-chain.test.ts"
         },
         {
+          "relativePath": "tests/chatgpt-core-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-core-execution.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-core-mcp.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-core-productivity.test.ts"
+        },
+        {
           "relativePath": "tests/chatgpt-gaming-contract.test.ts"
         },
         {
@@ -5435,6 +5483,9 @@
         },
         {
           "relativePath": "tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/chatgpt-core.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"

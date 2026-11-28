@@ -6494,14 +6494,15 @@ describe('/gpt-access gateway', () => {
     }
   });
 
-  it('does not expose non-gateway or non-GPT job outputs through GPT Access result polling', async () => {
+  it.each([
+    ['dag-node', { dagId: 'dag-1' }],
+    ['gpt', { requestPath: '/chatgpt/core/mcp', executionModeReason: 'chatgpt_core_query_v1' }],
+  ])('conceals %s jobs from other producers during GPT Access result polling', async (jobType, input) => {
     getJobByIdMock.mockResolvedValue({
       id: COMPLETED_JOB_ID,
-      job_type: 'dag-node',
+      job_type: jobType,
       status: 'completed',
-      input: {
-        dagId: 'dag-1'
-      },
+      input,
       created_at: '2026-04-27T10:00:00.000Z',
       updated_at: '2026-04-27T10:01:00.000Z',
       completed_at: '2026-04-27T10:01:00.000Z',

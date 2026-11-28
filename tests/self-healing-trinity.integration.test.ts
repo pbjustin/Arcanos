@@ -74,7 +74,11 @@ function requestWindow(degraded = true, requestCount = 12) {
   };
 }
 
-jest.unstable_mockModule('@services/memoryAware.js', () => ({ getMemoryContext: noEffect, storePattern: noEffect }));
+jest.unstable_mockModule('@services/memoryAware.js', () => ({
+  getMemoryContext: noEffect,
+  // Recovery may request pattern storage when a case enables the recorder.
+  storePattern: jest.fn()
+}));
 jest.unstable_mockModule('@services/judgedResponseFeedback.js', () => ({ processJudgedResponseFeedback: noEffect }));
 // The optional proposal controller writes evidence; its no-drift NOOP is a
 // deterministic persistence seam. Detection/authorization/actuation stay real.
@@ -235,7 +239,10 @@ async function runTrinity(complex = false, runOptions: TrinityRunOptions = {}, p
     },
     context: {
       client: adapter.getOpenAIAdapter().getClient(), runtimeBudget: budget.createRuntimeBudgetWithLimit(20_000, 0),
-      runOptions: { ...runOptions, disableMemoryAccess: true, disableOptionalSideEffects: true, strictUserVisibleOutput: true }
+      runOptions: {
+        ...runOptions, disableMemoryAccess: true, strictUserVisibleOutput: true,
+        disableOptionalSideEffects: runOptions.disableOptionalSideEffects ?? true
+      }
     }
   });
 }
@@ -291,7 +298,8 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     // so replacement is acknowledged before the bounded one-second stage abort.
     fixture.enqueue({ kind: 'timeout', holdForMs: 2_000 }, { kind: 'completion', text: answer });
     const olderRequest = runTrinity(false, {
-      internalMode: true, resolveModelStageTimeoutMs: stage => stage === 'intake' ? 1_000 : 2_000
+      internalMode: true, disableOptionalSideEffects: false,
+      resolveModelStageTimeoutMs: stage => stage === 'intake' ? 1_000 : 2_000
     });
     await requestSent;
     clockMs += 1;
@@ -328,6 +336,7 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     const stages: Parameters<NonNullable<TrinityRunOptions['onStage']>>[0][] = [];
     fixture.enqueue({ kind: 'timeout', holdForMs: 1_000 }, { kind: 'completion', text: answer });
     const recovered = await runTrinity(false, {
+      disableOptionalSideEffects: false,
       resolveModelStageTimeoutMs: stage => stage === 'intake' ? 100 : 2_000,
       onStage: stage => { stages.push(stage); }
     });
@@ -359,6 +368,7 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     else await killSwitch.setAutonomyLevel(1, 'synthetic restriction');
     fixture.enqueue({ kind: 'timeout', holdForMs: 1_000 }, { kind: 'completion', text: answer });
     const result = await runTrinity(false, {
+      disableOptionalSideEffects: false,
       resolveModelStageTimeoutMs: stage => stage === 'intake' ? 100 : 2_000
     });
     expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');

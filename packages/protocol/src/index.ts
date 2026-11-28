@@ -142,3 +142,4 @@ export {
 export * from './chatgptTutor.js';
 export * from './chatgptGaming.js';
 export * from './chatgptBooker.js';
+export * from './chatgptCore.js';

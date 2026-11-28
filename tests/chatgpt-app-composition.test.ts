@@ -15,6 +15,7 @@ const fixtureEnvironment: Record<string, string | undefined> = {
   MCP_ALLOWED_ORIGINS: '', JSON_LIMIT: '256kb',
   CHATGPT_MCP_ENABLED: undefined, CHATGPT_MCP_ISSUER: undefined,
   CHATGPT_MCP_RESOURCE: undefined, CHATGPT_MCP_JWKS_URL: undefined,
+  CHATGPT_CORE_ENABLED: undefined,
 };
 const originalEnvironment = new Map(Object.keys(fixtureEnvironment).map(name => [name, process.env[name]]));
 for (const [name, value] of Object.entries(fixtureEnvironment)) {
@@ -107,6 +108,8 @@ describe('ChatGPT integration in the real application composition', () => {
       .set('Content-Type', 'application/json').send('{invalid-json');
     const bookerMetadata = await request(app)
       .get('/.well-known/oauth-protected-resource/chatgpt/booker/mcp');
+    const core = await request(app).post('/chatgpt/core/mcp')
+      .set('Content-Type', 'application/json').send('{invalid-json');
     expect(transport.status).toBe(404);
     expect(metadata.status).toBe(404);
     expect(transport.body).toEqual({ error: 'CHATGPT_INTEGRATION_UNAVAILABLE' });
@@ -114,6 +117,8 @@ describe('ChatGPT integration in the real application composition', () => {
     expect(booker.status).toBe(404);
     expect(bookerMetadata.status).toBe(404);
     expect(booker.body).toEqual({ error: 'BOOKER_INTEGRATION_UNAVAILABLE' });
+    expect(core.status).toBe(404);
+    expect(core.body).toEqual({ error: 'CORE_INTEGRATION_UNAVAILABLE' });
     expect(buildOperatorServerMock).not.toHaveBeenCalled();
     expect(routeGptRequestMock).not.toHaveBeenCalled();
   });

@@ -143,8 +143,10 @@ import {
 import { getKillSwitchStatus } from '@services/incidentResponse/killSwitch.js';
 
 async function recordAuthorizedTrinityStageFailure(
-  params: Parameters<typeof recordTrinityStageFailure>[0]
+  params: Parameters<typeof recordTrinityStageFailure>[0],
+  disableOptionalSideEffects: TrinityRunOptions['disableOptionalSideEffects']
 ): Promise<TrinitySelfHealingAction | null> {
+  if (disableOptionalSideEffects) return null;
   const controls = await getKillSwitchStatus();
   throwIfRequestAborted();
   if (controls.frozen || controls.autonomyLevel < 3) return null;
@@ -1162,7 +1164,8 @@ export async function runThroughBrain(
         tier,
         reason: selectionReason,
         recovery: directAnswerOptions.recovery ?? false,
-        recoveryError: directAnswerOptions.recovery ? resolveErrorMessage(directAnswerOptions.recoveryError) : undefined
+        recoveryError: directAnswerOptions.recovery && !options.redactAuditContent
+          ? resolveErrorMessage(directAnswerOptions.recoveryError) : undefined
       });
 
       logArcanosRouting(
@@ -1865,6 +1868,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'intake',
         runtimeBudget,
+        redactErrorDetails: options.redactAuditContent,
         onStage: options.onStage,
         sourceEndpoint: options.sourceEndpoint,
         ...(options.resolveModelStageTimeoutMs ? { timeoutMs: intakeTimeoutMs } : {}),
@@ -1880,7 +1884,8 @@ export async function runThroughBrain(
             internalDirective,
             runtimeBudget,
             intakeTimeoutMs,
-            gamingGuideIntakePolicy
+            gamingGuideIntakePolicy,
+            options.redactAuditContent
           )
       });
     } catch (error) {
@@ -1888,11 +1893,11 @@ export async function runThroughBrain(
       if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'intake',
-          error: resolveErrorMessage(error),
+          error: options.redactAuditContent ? 'Sensitive-context generation failed.' : resolveErrorMessage(error),
           requestId,
           sourceEndpoint: options.sourceEndpoint,
           mitigationId: selfHealingMitigation.stageMitigationIds?.intake ?? null
-        });
+        }, options.disableOptionalSideEffects);
         const intakeRecoveryMitigationId = intakeRecoveryAction ? getTrinitySelfHealingMitigation({
           tier, answerMode: outputControls.answerMode
         }).stageMitigationIds?.intake ?? null : null;
@@ -1938,6 +1943,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'reasoning',
         runtimeBudget,
+        redactErrorDetails: options.redactAuditContent,
         onStage: options.onStage,
         sourceEndpoint: options.sourceEndpoint,
         ...(options.resolveModelStageTimeoutMs ? { timeoutMs: reasoningTimeoutMs } : {}),
@@ -1954,7 +1960,8 @@ export async function runThroughBrain(
             options.reasoningStagePreviewChaosHook,
             usage => {
               observedReasoningUsage = usage;
-            }
+            },
+            options.redactAuditContent
           )
       });
     } catch (error) {
@@ -1962,11 +1969,11 @@ export async function runThroughBrain(
       if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = await recordAuthorizedTrinityStageFailure({
           stage: 'reasoning',
-          error: resolveErrorMessage(error),
+          error: options.redactAuditContent ? 'Sensitive-context generation failed.' : resolveErrorMessage(error),
           requestId,
           sourceEndpoint: options.sourceEndpoint,
           mitigationId: selfHealingMitigation.stageMitigationIds?.reasoning ?? null
-        });
+        }, options.disableOptionalSideEffects);
         const reasoningRecoveryMitigationId = reasoningRecoveryAction ? getTrinitySelfHealingMitigation({
           tier, answerMode: outputControls.answerMode
         }).stageMitigationIds?.reasoning ?? null : null;
@@ -2005,6 +2012,7 @@ export async function runThroughBrain(
           requestId,
           stage: 'clear-audit',
           runtimeBudget,
+          redactErrorDetails: options.redactAuditContent,
           sourceEndpoint: options.sourceEndpoint,
           preserveAggregateAbortContext: options.preserveAggregateAbortContext,
           timeoutMs: resolveAuxiliaryStageTimeoutMs(
@@ -2012,9 +2020,8 @@ export async function runThroughBrain(
             DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
             runtimeBudget
           ),
-          operation: () => gamingGuideIntakePolicy
-            ? runClearAudit(client, reasoningLedger, runtimeBudget, auditSafePrompt)
-            : runClearAudit(client, reasoningLedger, runtimeBudget)
+          operation: () => runClearAudit(client, reasoningLedger, runtimeBudget,
+            gamingGuideIntakePolicy ? auditSafePrompt : undefined, 'routine', options.redactAuditContent)
         });
       } catch (error) {
         throwIfRequestAborted();
@@ -2025,7 +2032,7 @@ export async function runThroughBrain(
         logger.warn('[core] clear-audit skipped', {
           module: 'ARCANOS:CORE',
           requestId,
-          error: resolveErrorMessage(error)
+          error: options.redactAuditContent ? 'Sensitive-context generation failed.' : resolveErrorMessage(error)
         });
       }
       // Self-improve loop trigger (non-blocking): feed CLEAR into controller.
@@ -2100,8 +2107,9 @@ export async function runThroughBrain(
         requestId,
         stage: 'reflection',
         runtimeBudget,
+        redactErrorDetails: options.redactAuditContent,
         sourceEndpoint: options.sourceEndpoint,
-        operation: () => runReflection(client, gpt5Output, tier, runtimeBudget)
+        operation: () => runReflection(client, gpt5Output, tier, runtimeBudget, options.redactAuditContent)
       });
       if (critique) {
         gpt5Output += '\n\n--- CRITICAL REVIEW ---\n' + critique;
@@ -2174,6 +2182,7 @@ export async function runThroughBrain(
           requestId,
           stage: 'final',
           runtimeBudget,
+          redactErrorDetails: options.redactAuditContent,
           onStage: options.onStage,
           sourceEndpoint: options.sourceEndpoint,
           ...(options.resolveModelStageTimeoutMs ? { timeoutMs: finalTimeoutMs } : {}),
@@ -2192,7 +2201,8 @@ export async function runThroughBrain(
               finalTimeoutMs,
               tier !== 'simple' || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
                 ? 'escalation' : 'routine',
-              gamingPresentationSystemPrompt
+              gamingPresentationSystemPrompt,
+              options.redactAuditContent
             )
         });
       } catch (error) {
@@ -2200,11 +2210,11 @@ export async function runThroughBrain(
         if (!gamingPresentationPolicy && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
           finalRecoveryAction = await recordAuthorizedTrinityStageFailure({
             stage: 'final',
-            error: resolveErrorMessage(error),
+            error: options.redactAuditContent ? 'Sensitive-context generation failed.' : resolveErrorMessage(error),
             requestId,
             sourceEndpoint: options.sourceEndpoint,
             mitigationId: selfHealingMitigation.stageMitigationIds?.final ?? null
-          });
+          }, options.disableOptionalSideEffects);
           finalRecoveryMitigationId = finalRecoveryAction ? getTrinitySelfHealingMitigation({
             tier, answerMode: outputControls.answerMode
           }).stageMitigationIds?.final ?? null : null;

@@ -12,6 +12,7 @@ import { safeJSONStringify } from '@shared/jsonHelpers.js';
 import { isQueuedGptJobCancellationPrivacySensitive } from '@shared/gpt/gptJobLifecycle.js';
 import { resolveProtectedBackstageQueuedGptJobAction } from '@shared/gpt/asyncGptJob.js';
 import { readBackstageAuthorityWaitState } from '@shared/backstage/backstageAuthorityWait.js';
+import { CORE_GPT_JOB_PATH, isCoreGptJobInput } from '@shared/chatgpt/coreJob.js';
 import {
   computeGptJobLifecycleDeadlines,
   isGptJobResultReusable,
@@ -1377,6 +1378,25 @@ export async function getJobById(jobId: string): Promise<JobData | null> {
     result.rows[0] as JobData | undefined,
     'Fetched job claim_generation'
   );
+}
+
+/** Read only committed Core turns for the exact already-authorized session. */
+export async function readRecentCompletedCoreGptJobs(scopeHash: string, sessionReference: string): Promise<JobData[]> {
+  assertDatabaseReady();
+  const result = await query(
+    `SELECT *
+     FROM job_data
+     WHERE job_type = 'gpt' AND status = 'completed'
+       AND idempotency_scope_hash = $1
+       AND input->>'requestPath' = $2
+       AND input #>> '{protectedCore,sessionReference}' = $3
+       AND (retention_until IS NULL OR retention_until > NOW())
+       AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY completed_at DESC, id DESC
+     LIMIT 8`,
+    [scopeHash, CORE_GPT_JOB_PATH, sessionReference]
+  );
+  return result.rows as JobData[];
 }
 
 async function findReusableGptJobByIdempotencyKey(
@@ -3186,11 +3206,9 @@ export async function recoverStalledJobsForWorkers(
 }
 
 /**
- * Get the latest non-local-agent queue job.
- * Purpose: support generic operator tooling without crossing the protected
- * local-agent result boundary.
- * Inputs/outputs: no inputs, returns the most recently created non-local-agent
- * job or `null`.
+ * Get the latest job visible to generic operator tooling.
+ * Purpose: preserve protected job result boundaries.
+ * Inputs/outputs: no inputs, returns the most recently created eligible job or `null`.
  * Edge case behavior: returns `null` when the database is unavailable or no jobs exist.
  */
 export async function getLatestJob(): Promise<JobData | null> {
@@ -3203,9 +3221,10 @@ export async function getLatestJob(): Promise<JobData | null> {
       `SELECT *
        FROM job_data
        WHERE job_type <> 'local-agent'
+         AND (job_type <> 'gpt' OR input->>'requestPath' IS DISTINCT FROM $1)
        ORDER BY created_at DESC
        LIMIT 1`,
-      []
+      [CORE_GPT_JOB_PATH]
     );
     return (result.rows[0] as JobData | undefined) ?? null;
   } catch (error: unknown) {
@@ -3952,7 +3971,8 @@ export async function requeueFailedJob(
   assertDatabaseReady();
 
   const job = await getJobById(jobId);
-  if (!job || job.status !== 'failed' || job.job_type === 'local-agent') {
+  if (!job || job.status !== 'failed' || job.job_type === 'local-agent'
+    || (job.job_type === 'gpt' && isCoreGptJobInput(job.input))) {
     return null;
   }
 
@@ -4102,9 +4122,10 @@ export async function listFailedJobs(limit = 10): Promise<FailedJobSnapshot[]> {
        FROM job_data
        WHERE status = 'failed'
          AND job_type <> 'local-agent'
+         AND (job_type <> 'gpt' OR input->>'requestPath' IS DISTINCT FROM $2)
        ORDER BY updated_at DESC, created_at DESC
        LIMIT $1`,
-      [normalizedLimit]
+      [normalizedLimit, CORE_GPT_JOB_PATH]
     );
 
     return result.rows as FailedJobSnapshot[];

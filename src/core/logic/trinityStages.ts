@@ -414,7 +414,8 @@ export async function runIntakeStage(
   systemPromptOverride?: string,
   runtimeBudget?: RuntimeBudget,
   explicitTimeoutMs?: number,
-  gamingGuideIntakePolicy?: 'compact-v1'
+  gamingGuideIntakePolicy?: 'compact-v1',
+  redactSensitiveDiagnostics?: boolean,
 ): Promise<TrinityIntakeOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -465,6 +466,7 @@ export async function runIntakeStage(
       ...(gamingIntakeContract.reasoningEffort ? { reasoning_effort: gamingIntakeContract.reasoningEffort } : {})
     } : {}),
     timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
+    ...(redactSensitiveDiagnostics ? { redactErrorDetails: true } : {}),
     ...intakeTokenParams
   }, 'intake').catch((error: unknown) => {
     if (gamingIntakeContract) {
@@ -529,7 +531,8 @@ export async function runReasoningStage(
   runtimeBudget?: RuntimeBudget,
   explicitTimeoutMs?: number,
   previewChaosHook?: PreviewAskChaosHook,
-  onUsage?: (usage: TrinityReasoningUsage) => void
+  onUsage?: (usage: TrinityReasoningUsage) => void,
+  redactSensitiveDiagnostics?: boolean,
 ): Promise<TrinityReasoningOutput> {
   //audit Assumption: reasoning stage requires a shared runtime budget; risk: unbounded model call if missing; invariant: one RuntimeBudget governs each job; handling: fail-fast.
   if (!runtimeBudget) {
@@ -547,7 +550,7 @@ export async function runReasoningStage(
     })
   ].join('\n');
 
-  logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
+  logGPT5Invocation('Primary reasoning stage', redactSensitiveDiagnostics ? '[SENSITIVE_CONTEXT_REDACTED]' : reasoningPrompt);
   const gpt5ModelUsed = getTrinityReasoningModel();
   const reasoningPolicy = resolveTrinityReasoningProviderPolicy({
     model: gpt5ModelUsed,
@@ -564,6 +567,7 @@ export async function runReasoningStage(
     resolveReasoningStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     {
       schemaVariant,
+      ...(redactSensitiveDiagnostics ? { store: false as const } : {}),
       previewChaosHook,
       reasoningEffort: reasoningPolicy.reasoningEffort,
       maxOutputTokens: reasoningPolicy.maxOutputTokens,
@@ -660,7 +664,8 @@ export async function runFinalStage(
   runtimeBudget?: RuntimeBudget,
   explicitTimeoutMs?: number,
   finalLane: 'routine' | 'escalation' = 'routine',
-  generationSystemPolicy?: string
+  generationSystemPolicy?: string,
+  redactSensitiveDiagnostics?: boolean,
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -693,6 +698,7 @@ export async function runFinalStage(
       : {}),
     timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...(generationSystemPolicy ? { requireCompletedTextOutput: true, redactErrorDetails: true, maxRetries: 0 as const } : {}),
+    ...(redactSensitiveDiagnostics ? { redactErrorDetails: true } : {}),
     ...finalTokenParams
   }, finalLane === 'escalation' ? 'final-escalation' : 'final');
   const finalText = finalResponse.choices[0]?.message?.content || '';

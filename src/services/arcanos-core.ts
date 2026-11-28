@@ -722,7 +722,9 @@ export async function runArcanosCoreQuery(
     });
     return result;
   } catch (error) {
-    const errorMessage = resolveErrorMessage(error);
+    const errorMessage = params.runOptions?.redactAuditContent
+      ? 'Core generation failed.'
+      : resolveErrorMessage(error);
     const durationMs = Date.now() - startedAt;
     if (shouldRecoverViaCoreDegradedPath(error, durationMs, pipelinePlan)) {
       const primaryTimeoutPhase = resolveCoreFallbackTimeoutPhase(error);

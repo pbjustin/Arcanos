@@ -939,16 +939,19 @@ describe('/jobs routes', () => {
     expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
-  it('hides protected GPT Access jobs even with a mathematically valid generic capability', async () => {
+  it.each([
+    [GPT_ACCESS_JOB_ID, '/gpt-access/jobs/create', 'gpt_access_create_ai_job'],
+    ['16161616-1616-4616-8616-161616161616', '/chatgpt/core/mcp', 'chatgpt_core_query_v1'],
+  ])('conceals protected job %s even with a mathematically valid generic capability', async (jobId, requestPath, executionModeReason) => {
     const protectedResultSentinel = 'PROTECTED_GPT_ACCESS_RESULT_SENTINEL';
     const protectedErrorSentinel = 'PROTECTED_GPT_ACCESS_ERROR_SENTINEL';
     const protectedJob = {
-      id: GPT_ACCESS_JOB_ID,
+      id: jobId,
       job_type: 'gpt',
       status: 'completed',
       input: {
-        requestPath: '/gpt-access/jobs/create',
-        executionModeReason: 'gpt_access_create_ai_job',
+        requestPath,
+        executionModeReason,
       },
       created_at: '2026-07-24T10:00:00.000Z',
       updated_at: '2026-07-24T10:01:00.000Z',
@@ -967,20 +970,20 @@ describe('/jobs routes', () => {
       .mockResolvedValueOnce(protectedJob);
 
     const statusResponse = await getWithJobReadToken(
-      `/jobs/${GPT_ACCESS_JOB_ID}`,
-      GPT_ACCESS_JOB_ID
+      `/jobs/${jobId}`,
+      jobId
     );
     const resultResponse = await getWithJobReadToken(
-      `/jobs/${GPT_ACCESS_JOB_ID}/result`,
-      GPT_ACCESS_JOB_ID
+      `/jobs/${jobId}/result`,
+      jobId
     );
     const streamResponse = await getWithJobReadToken(
-      `/jobs/${GPT_ACCESS_JOB_ID}/stream`,
-      GPT_ACCESS_JOB_ID
+      `/jobs/${jobId}/stream`,
+      jobId
     );
     const cancellationResponse = await postWithJobReadToken(
-      `/jobs/${GPT_ACCESS_JOB_ID}/cancel`,
-      GPT_ACCESS_JOB_ID
+      `/jobs/${jobId}/cancel`,
+      jobId
     )
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-1');
@@ -988,7 +991,7 @@ describe('/jobs routes', () => {
     expect(statusResponse.status).toBe(404);
     expect(resultResponse.status).toBe(200);
     expect(resultResponse.body).toMatchObject({
-      jobId: GPT_ACCESS_JOB_ID,
+      jobId,
       status: 'not_found',
       result: null,
     });

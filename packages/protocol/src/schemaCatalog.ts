@@ -1,6 +1,7 @@
 import { chatGptTutorInputSchema, chatGptTutorOutputSchema } from './chatgptTutor.js';
 import { chatGptGamingSchemas } from './chatgptGaming.js';
 import { chatGptBookerSchemas } from './chatgptBooker.js';
+import { chatGptCoreSchemas } from './chatgptCore.js';
 import artifactStoreRequestSchema from "../schemas/v1/commands/artifact.store.request.schema.json" with { type: "json" };
 import artifactStoreResponseSchema from "../schemas/v1/commands/artifact.store.response.schema.json" with { type: "json" };
 import envelopeSchema from "../schemas/v1/envelope.schema.json" with { type: "json" };
@@ -207,6 +208,7 @@ export function getProtocolSchemaCatalog() {
     tools: {
       ...chatGptGamingSchemas,
       ...chatGptBookerSchemas,
+      ...chatGptCoreSchemas,
       arcanos_tutor: { input: chatGptTutorInputSchema, output: chatGptTutorOutputSchema },
       "doctor.implementation": {
         input: doctorImplementationInputSchema,

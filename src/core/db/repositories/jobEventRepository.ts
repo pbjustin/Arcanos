@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { CORE_GPT_JOB_PATH } from '@shared/chatgpt/coreJob.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { dbLogger } from '@platform/logging/structuredLogging.js';
@@ -443,6 +444,7 @@ export function buildJobEventTimelineQuery(
           `AND job.input->'job'->>'workspace' = ${workspaceParam}))`
       );
     }
+    addCondition("(job.job_type <> 'gpt' OR job.input->>'requestPath' IS DISTINCT FROM ?)", CORE_GPT_JOB_PATH);
   }
 
   const limit = normalizePositiveInteger(

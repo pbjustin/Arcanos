@@ -71,7 +71,8 @@ export async function runClearAudit(
   ledger: ReasoningLedger,
   runtimeBudget?: RuntimeBudget,
   originalGamingRequest?: string,
-  modelLane: 'routine' | 'escalation' = 'routine'
+  modelLane: 'routine' | 'escalation' = 'routine',
+  redactSensitiveDiagnostics?: boolean
 ): Promise<ClearAuditResult> {
   const ledgerText = originalGamingRequest === undefined
     ? JSON.stringify(ledger, null, 2)
@@ -90,6 +91,7 @@ export async function runClearAudit(
       modelRole: modelLane === 'escalation' ? 'audit-escalation' : 'audit',
       ...(reasoningEffort ? { reasoningEffort } : {}),
       signal: getRequestAbortSignal(),
+      ...(redactSensitiveDiagnostics ? { redactSensitiveDiagnostics: true } : {}),
       timeoutMs: resolveClearAuditTimeoutMs(runtimeBudget)
     });
   } catch (error) {
